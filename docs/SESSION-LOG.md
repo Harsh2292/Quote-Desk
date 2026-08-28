@@ -46,3 +46,55 @@ deliberately.
 
 **Next:** Task 00 — environment, repo and provider spike. This is the only command needed to start:
 `/task 00`.
+
+---
+
+## 2026-08-29 — Task 00 (parts 1–3 done, 4–5 outstanding)
+
+**Done:** The plan was read and challenged; 22 findings raised and four decisions taken (below).
+Repo initialised, 44 files in one local commit `57b55e3 chore: project setup`. **Not pushed** — see
+"Blocked". Hooks made executable and the exec bit forced into the git index with
+`git update-index --chmod=+x`, since Windows leaves `core.filemode` unset and the plain `chmod`
+recorded nothing. Added `.gitattributes` because `core.autocrlf=true` would hand the hook scripts
+CRLF endings on re-checkout and break bash.
+
+**Files that matter:** `docs/SPEC.md` §7 and `docs/DOMAIN.md` — both need the schema edits agreed
+today and not yet written. `tasks/task-00-environment.md` still reads `todo`.
+
+**Decisions made:**
+- **Schema gaps get fixed before task 02**, not after. SPEC §7 cannot store the worked example's
+  approved outcome: `Quotes` needs `ShipTo`/`RequiredBy`/`Freight`/`ValidUntil`; `QuoteLines` needs
+  `RequiresOverride`/`MarginShortfallPct`/`DispatchDate`/`DeliveryDate`; `Customers` needs
+  `ShipToZone`; and `EnquiryAttachments`, `Approvals` and `WorkflowCheckpoints` do not exist at all.
+- **`PriceRules` holds quantity slabs only**, loaded by a repository and passed into
+  `SlabDiscountPolicy` as a parameter — Domain has zero references and cannot read a database. Tier
+  percentages, the 10% margin floor, 18% GST, 15-day validity, freight zones and the holiday calendar
+  are constants in Domain. Cost accepted: changing a holiday is a code change, not a data edit.
+- **The spike also probes workflow suspend/resume**, not just tool calling. That risk was otherwise
+  untested until task 06.
+- **Never run `git commit` or `git push`** — stage and propose the message; Harsh commits. Applies in
+  auto mode too. The history is part of the portfolio.
+
+**Agent Framework, confirmed by `api-researcher`:** packages are GA and target `net10.0`;
+`Microsoft.Agents.AI` and `.OpenAI` are both **1.19.0**, so SPEC §4's "1.5.0" is stale. SPEC §5's
+`AsAIAgent` snippet is correct as written. Tools attach per agent instance via
+`ChatClientAgentOptions.ChatOptions.Tools`, so two disjoint registries genuinely work. Human-in-the-loop
+is first-class: `WorkflowBuilder` + `RequestPort.Create<TReq,TResp>` + `RequestInfoEvent` +
+`handle.SendResponseAsync`. Checkpointing ships `FileSystemJsonCheckpointStore` and `CosmosCheckpointStore`
+but **no SQL store** — task 06 should implement `ICheckpointStore<JsonElement>` over the
+`WorkflowCheckpoints` table. Rehydration needs a stable `ChatClientAgentOptions.Id` per agent.
+`RunStreamingAsync` yields message-level `AgentRunResponseUpdate`s, **not token deltas**, so SPEC §9's
+`token` event will be chunkier than the UI design assumes. No official `IChatClient` test double exists;
+task 06 writes its own fake.
+
+**Known gaps:** `jq` is **not installed**, so `guard-paths.sh` and `guard-bash.sh` both `exit 0` and
+protect nothing — SETUP.md's "hooks are law" is false until it is. Docker daemon not running. The
+Gemini key is set nowhere. Parts 4 and 5 of task 00 are untouched: no spike has run, so the streaming
+verdict is still unknown, and the SPEC/DOMAIN edits above are still unwritten.
+
+**Blocked on Harsh:** Install `jq` (`winget install jqlang.jq`) and restart Claude Code. Start Docker
+Desktop. Decide whether local commit `57b55e3` stays or is undone with `git reset --soft HEAD~1`.
+Set the Gemini key via `dotnet user-secrets` once the spike project exists.
+
+**Next:** Finish task 00 — parts 4 and 5. The spike settles the one genuine unknown (tool calling on
+Gemini, streaming and not) before anything depends on it.
