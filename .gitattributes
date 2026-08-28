@@ -1,0 +1,14 @@
+# core.autocrlf=true is set globally on the dev machine. Without this file the hook
+# scripts are checked out with CRLF and bash fails on the carriage return.
+* text=auto eol=lf
+
+*.sh text eol=lf
+*.sln text eol=crlf
+*.csproj text eol=lf
+*.props text eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.pdf binary
+*.ico binary

@@ -1,0 +1,25 @@
+bin/
+obj/
+node_modules/
+dist/
+.vs/
+.vscode/
+*.user
+
+# secrets — never commit
+appsettings.Development.json
+appsettings.Local.json
+.env
+.env.*
+!.env.example
+secrets/
+
+# claude code personal scope
+CLAUDE.local.md
+.claude/settings.local.json
+
+# test + tooling output
+TestResults/
+coverage/
+*.trx
+evals-report.json
