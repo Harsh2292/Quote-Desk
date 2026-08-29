@@ -11,9 +11,9 @@ and the status update happen automatically as part of finishing a task.
 | # | Task | Session | Status |
 |---|---|---|---|
 | 00 | [Environment, repo, provider spike](task-00-environment.md) | 1 | done |
-| 01 | [Setup and skeleton](task-01-setup.md) | 1 | todo |
-| 02 | [Data, EF Core, migrations, seed](task-02-data-efcore.md) | 1 | todo |
-| 03 | [Pricing domain](task-03-pricing-domain.md) | 1 | todo |
+| 01 | [Setup and skeleton](task-01-setup.md) | 1 | done |
+| 02 | [Data, EF Core, migrations, seed](task-02-data-efcore.md) | 1 | done |
+| 03 | [Pricing domain](task-03-pricing-domain.md) | 1 | done |
 | 04 | [Intake abstraction and paste adapter](task-04-intake.md) | 2 | todo |
 | 05 | [Typed tools](task-05-tools.md) | 2 | todo |
 | 06 | [Agents and workflow](task-06-agents-workflow.md) | 2 | todo |

@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- CLAUDE.md mandates MethodName_Scenario_ExpectedOutcome test names, which CA1707 forbids. -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+</Project>

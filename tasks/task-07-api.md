@@ -9,7 +9,7 @@ shapes.
 
 ## Stack for this task
 
-ASP.NET Core Minimal APIs · Server-Sent Events · JWT bearer · `AddRateLimiter` · Serilog
+ASP.NET Core Minimal APIs · Server-Sent Events · Google OpenID Connect · `AddRateLimiter` · Serilog
 
 ## What to build
 
@@ -37,7 +37,10 @@ type AgentEvent =
   | { type: 'error';      code: 'provider_rate_limited'|'budget_exceeded'|'internal'; message: string }
 ```
 
-- JWT on every `/api/*` route. One demo user, one seeded credential. **Do not build a user system.**
+- Google OpenID Connect on every `/api/*` route — sign in with Google, no seeded credential, no
+  password, still **no user system to build** (changed from the original JWT-bearer plan; see
+  docs/SPEC.md §3). Harsh creates the OAuth client in Google Cloud Console when this task starts;
+  the client secret goes to `dotnet user-secrets`, never the repo.
 - Rate limiting per IP and per token, plus a hard daily cap for the public demo
 - Global exception handler producing RFC 9457 `ProblemDetails` — no stack traces, no connection
   strings, no inner exception text

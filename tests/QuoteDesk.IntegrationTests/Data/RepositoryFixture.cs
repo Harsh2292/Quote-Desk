@@ -1,0 +1,39 @@
+using Microsoft.EntityFrameworkCore;
+using QuoteDesk.Data;
+using QuoteDesk.Data.Repositories;
+using QuoteDesk.Data.Seed;
+
+namespace QuoteDesk.IntegrationTests.Data;
+
+/// <summary>Migrates and seeds a dedicated test database once, shared read-only across every test
+/// in <see cref="RepositoryTests"/>.</summary>
+public sealed class RepositoryFixture : IAsyncLifetime
+{
+    private const string DatabaseName = "QuoteDeskTests_Repository";
+
+    public ICatalogRepository Catalog { get; private set; } = null!;
+    public ICustomerRepository Customers { get; private set; } = null!;
+    public IStockRepository Stock { get; private set; } = null!;
+    public IOrderHistoryRepository OrderHistory { get; private set; } = null!;
+    public IPriceRuleRepository PriceRules { get; private set; } = null!;
+    public IEnquiryRepository Enquiries { get; private set; } = null!;
+
+    private QuoteDeskDbContext _db = null!;
+
+    public async Task InitializeAsync()
+    {
+        _db = TestConnection.CreateContext(DatabaseName);
+        await _db.Database.EnsureDeletedAsync();
+        await _db.Database.MigrateAsync();
+        await DeterministicSeeder.SeedAsync(_db, CancellationToken.None);
+
+        Catalog = new CatalogRepository(_db);
+        Customers = new CustomerRepository(_db);
+        Stock = new StockRepository(_db);
+        OrderHistory = new OrderHistoryRepository(_db);
+        PriceRules = new PriceRuleRepository(_db);
+        Enquiries = new EnquiryRepository(_db);
+    }
+
+    public async Task DisposeAsync() => await _db.DisposeAsync();
+}

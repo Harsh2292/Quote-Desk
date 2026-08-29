@@ -190,3 +190,32 @@ left in the scratchpad.
 
 **Next:** Task 01 — setup and skeleton. Build the solution and the six projects per `CLAUDE.md`'s
 layout, wired `Api → Agents → Data → Domain`, `Intake → Api`, before any real logic.
+
+## 2026-08-29 — Tasks 01 + 03 + 02 done (built together, deliberately)
+
+**Done:** Solution builds clean under `-warnaserror` (5 source + 3 test projects, `Api → Agents →
+Data → Domain` and `Api → Intake → Data`). SQL Server runs via `docker-compose.yml` and is migrated.
+Every pricing rule in `docs/DOMAIN.md` is implemented in `QuoteDesk.Domain` and proven — including a
+single test reproducing the Shreeji Textiles worked example exactly (8% discount, 14% margin, belt
+missing its date). The database is seeded deterministically (25 customers, 262 catalogue items, 1,200
+order-history rows, 12 enquiries) with all six deliberate cases individually queryable. Vite/React
+health-check page confirmed working end to end against the live Api through the dev-server proxy. 35
+unit tests + 14 real-container integration tests, all passing.
+
+**Files that matter:** `CLAUDE.md` (dependency-graph line, corrected), `docs/DOMAIN.md` ("The
+numbers, filled in by task 03"), `src/QuoteDesk.Data/Seed/DeterministicSeeder.cs`.
+
+**Decisions made:** Built 01+03+02 in one sitting, not separately — justified because all three are
+foundation with zero external unknowns, and task 03 was done *before* 02 (its own "depends on 02" is
+wrong: Domain has no references at all). Google OpenID Connect replaces the JWT-bearer plan for task
+07 (Harsh's instruction; `docs/SPEC.md` §3 and task 07 updated). Docker Desktop's containerd
+snapshotter was breaking every pull from `mcr.microsoft.com`; fixed by disabling it in Docker
+Desktop's own settings — a machine-local toggle, not a repo change.
+
+**Known gaps:** Seed data is 262 catalogue items / 16 price rules, not the spec's ~300 / ~40 —
+documented as a deliberate simplification in task 02's Notes on completion. `IEnquiryRepository` is
+read-only; task 04 adds the write path.
+
+**Blocked on Harsh:** Nothing.
+
+**Next:** Task 04 — intake abstraction and paste adapter.

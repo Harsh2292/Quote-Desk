@@ -1,0 +1,6 @@
+root = false
+
+# EF Core generates composite-index calls with inline array literals; regenerating a migration
+# would just reintroduce this every time, so it is suppressed here rather than in the shared rule set.
+[*.cs]
+dotnet_diagnostic.CA1861.severity = none

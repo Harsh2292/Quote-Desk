@@ -44,16 +44,60 @@ The seed must include these deliberate cases, because everything downstream test
 
 ## Acceptance criteria
 
-- [ ] `dotnet ef migrations add InitialCreate` was used — the migration is not hand-written
-- [ ] `dotnet ef database update` produces every table from scratch
-- [ ] Running the seed twice produces byte-identical data
-- [ ] Every one of the six deliberate cases is present and individually queryable
-- [ ] All money columns are `decimal(18,2)`; no EF truncation warning appears
-- [ ] Repository integration tests pass against the containerised database
-- [ ] No entity type appears in any signature outside `QuoteDesk.Data`
+- [x] `dotnet ef migrations add InitialCreate` was used — the migration is not hand-written
+- [x] `dotnet ef database update` produces every table from scratch
+- [x] Running the seed twice produces byte-identical data
+- [x] Every one of the six deliberate cases is present and individually queryable
+- [x] All money columns are `decimal(18,2)`; no EF truncation warning appears
+- [x] Repository integration tests pass against the containerised database
+- [x] No entity type appears in any signature outside `QuoteDesk.Data`
 
 ## Out of scope
 
 Pricing logic, agents, the API surface beyond what tests need.
 
 ## Notes on completion
+
+Built together with tasks 01 and 03 — see `docs/SESSION-LOG.md`.
+
+**What was built:** all eight entities with one `IEntityTypeConfiguration<T>` each, every decimal
+column explicit (`decimal(18,2)` for money, `decimal(5,4)` for discount percentages), `StockLevel`
+keyed by `Sku` rather than a surrogate id, `Enquiry.Channel`/`Status` stored as plain strings so the
+`EnquiryChannel` enum stays inside `QuoteDesk.Intake` per `docs/SPEC.md` §5. Repository interfaces
+(`ICatalogRepository`, `ICustomerRepository`, `IStockRepository`, `IOrderHistoryRepository`,
+`IPriceRuleRepository`, `IEnquiryRepository`) return plain records only — checked by a reflection
+test over every method signature, not by convention, matching how `docs/SPEC.md` §6 says cost price
+must eventually be kept from the model. `DeterministicSeeder` (fixed seed `20260829`, idempotent —
+a no-op once any customer exists) produces 25 customers, 262 catalogue items across four categories,
+262 stock levels, 16 price rules (one `SlabDiscountPolicy.DefaultLadder` per category), 1,200 order
+history rows, and the 12 seeded enquiries, invoked via `dotnet run --project src/QuoteDesk.Api --
+--seed`.
+
+**Two deliberate deviations from this file's row counts**, both because the spec's own numbers are
+sizing guidance, not a contract, and simplicity was prioritised over hitting them exactly:
+- **262 catalogue items, not 300.** Generated from four category grids (bearing bore×suffix,
+  belt width×type, spindle-tape application×thickness, gear module×teeth) sized in round numbers
+  rather than trimmed to land on exactly 300.
+- **16 `PriceRules`, not ~40.** One 4-rung ladder per category, deliberately identical to
+  `SlabDiscountPolicy.DefaultLadder` so `price_quote` (task 05) reproduces the worked example exactly
+  end to end. A denser per-SKU override table is realistic future work, not something the demo needs,
+  and the schema (`Scope`/`Target`) already supports adding one without a migration.
+
+Every one of the six deliberate seed cases came out of the natural combinatorics of the category
+grids rather than needing to be spliced in as special cases — `BRG-6203-2RS` and `BRG-6203-ZZ` are
+both just elements of the bearing bore×suffix grid, and the 6mm/8mm spindle-tape pair falls out of
+the application×thickness grid the same way, distinguished only by `Attributes` as required. Two
+values needed an explicit override after generation to hit the worked example precisely: the
+`BELT-PU-25MM` stock level (`OnHand = 12`) and the `GEAR-M2-40T` pricing (`ListPrice = 100.00`,
+`CostPrice = 90.00`, a 10% spread — the deliberate margin-floor breach case).
+
+**What surprised me:** the generated `InitialCreate` migration itself failed `-warnaserror` —
+`CA1861` fired on the composite-index calls EF Core emits with inline array literals. Hand-editing
+generated code would just be undone by the next `migrations add`, so the fix is a scoped
+`src/QuoteDesk.Data/Migrations/.editorconfig` suppressing that one rule for that one folder, leaving
+the analyzer at full strength everywhere else in the project.
+
+**What the next task should know:** `IEnquiryRepository` is read-only (`GetByIdAsync` only) — task
+04's `PasteAdapter` needs to add the write path itself. The connection string lives in
+`dotnet user-secrets` under `ConnectionStrings:QuoteDesk`, already set for this machine to match
+`docker-compose.yml`'s local SA password.

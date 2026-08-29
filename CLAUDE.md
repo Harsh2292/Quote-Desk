@@ -41,8 +41,12 @@ src/QuoteDesk.Web/      React
 tests/                  UnitTests · IntegrationTests · Evals
 ```
 
-Dependencies flow one way: `Api → Agents → Data → Domain`, with `Intake → Api`. `Domain` references
-nothing. A reference pointing back up means the logic is in the wrong project.
+Dependencies flow one way: `Api → Agents → Data → Domain`, with `Api → Intake → Data`. `Domain`
+references nothing. A reference pointing back up means the logic is in the wrong project.
+
+(Corrected in task 01: this file previously said `Intake → Api`, but `POST /api/enquiries` lives in
+`QuoteDesk.Api` and calls `PasteAdapter` in `QuoteDesk.Intake`, which persists into `Enquiries` — the
+arrow has to point the other way, or task 04 cannot compile.)
 
 ## Commands
 

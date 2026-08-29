@@ -56,13 +56,31 @@ tool. Say that out loud — it is a better answer than having used one.
 | Telemetry | OpenTelemetry → Application Insights |
 | Frontend | React 19 + Vite + TypeScript + Tailwind, plain `fetch` |
 | Streaming | Server-Sent Events |
-| Auth | JWT bearer, one demo user. **Do not build a user system.** |
+| Auth | **Google OpenID Connect.** Still no user system to build — Google is the identity provider, sign-in is a redirect, and the app stores no password. Changed from the JWT-bearer/seeded-credential plan in task 01, on Harsh's instruction. |
 | Tests | xUnit + FluentAssertions, in `tests/` |
 | CI/CD | GitHub Actions → Azure Container Apps + Static Web Apps |
 
 As of Aug 2026 `Microsoft.Agents.AI` was at 1.19.0 and `Microsoft.Agents.AI.OpenAI` at 1.5.0. **Do
 not hardcode versions from this document** — run `dotnet add package`, take what NuGet resolves, and
 record the resolved versions back here.
+
+**Resolved in task 01** (.NET 10.0.302 SDK, EF Core CLI 10.0.11):
+
+| Package | Version |
+|---|---|
+| `Serilog.AspNetCore` | 10.0.0 |
+| `Microsoft.EntityFrameworkCore.SqlServer` | 10.0.11 |
+| `Microsoft.EntityFrameworkCore.Design` | 10.0.11 |
+| `AspNetCore.HealthChecks.SqlServer` | 9.0.0 |
+| `FluentAssertions` | 7.2.0 (pinned — v8 moved to a paid Xceed licence; 7.2.0 is the last Apache-2.0 release) |
+| `@tailwindcss/vite` | 4.3.3 |
+| React | 19.2.8 |
+| Vite | 8.2.2 |
+
+`Microsoft.AspNetCore.OpenApi` was deliberately **not** added to `QuoteDesk.Api`: the version NuGet
+resolved for .NET 10 (2.0.0) pulls in a `Microsoft.OpenApi` with a known high-severity advisory,
+which fails `-warnaserror`'s `NU1903` check. Task 01 needs no Swagger UI, so the package was dropped
+rather than suppressed; revisit if a later task genuinely needs OpenAPI generation.
 
 ## 4. LLM provider — free, and swappable
 

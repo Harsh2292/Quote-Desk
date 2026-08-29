@@ -93,7 +93,30 @@ destination. Sundays and listed holidays are skipped. Every date is computed fro
 **Quote validity** — 15 days from issue, stated on the document.
 
 **Unknown sender** — no customer match means: list price only, no credit terms, and the quote is
-flagged as a new-customer enquiry for the human to verify before sending.
+flagged as a new-customer enquiry for the human to verify before sending. The slab discount still
+applies — quantity economics are real even without a customer record; the tier discount does not.
+
+### The numbers, filled in by task 03
+
+The rules above give the shape of every calculation but not the concrete figures — task 03 needed
+real numbers to write a single test against, so they were adopted here rather than guessed silently.
+The 200-unit / 6% slab and the tier percentages above are the only ones this document already fixed;
+everything else below was chosen to make the worked example reproduce exactly and is a plain default,
+not a locked business rule — change it the day the real numbers differ.
+
+| Rule | Value |
+|---|---|
+| Slab ladder (default, per category) | 1+ → 0%, 50+ → 3%, 200+ → 6%, 500+ → 9% |
+| Combined discount cap | Slab + tier never exceeds 15%, however either is computed |
+| Rounding | Two decimal places, away-from-zero (round-half-up) — the Indian invoicing convention, not the banker's rounding .NET defaults to |
+| Freight zones | Local: ₹0 / 1-day transit · Regional: ₹450 / 3-day transit · National: ₹1,200 / 5-day transit |
+| Freight waiver threshold | Above ₹50,000 taxable value — exactly at ₹50,000 still pays freight |
+| Working-day rule | Sundays are always off; holidays come from an injected list the caller supplies — the domain reads no calendar and no clock |
+
+With these numbers, the worked example's dates fall out with no fudging: the belt's dispatch lands
+on Saturday 4th (short by lead time), and a 1-day Local transit lands delivery on Sunday 5th, which
+rolls forward to Monday the 6th — reproducing "earliest dispatch the 4th" / "delivery the 6th" from
+the email exactly, including *why* it misses the requested 5th.
 
 ## Glossary
 
