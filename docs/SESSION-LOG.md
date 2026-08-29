@@ -216,6 +216,16 @@ Desktop's own settings — a machine-local toggle, not a repo change.
 documented as a deliberate simplification in task 02's Notes on completion. `IEnquiryRepository` is
 read-only; task 04 adds the write path.
 
+**Committed:** `142d0c3` on `development`, local only (not pushed). Re-verified build/tests
+immediately before committing — still 0 warnings, 49/49 tests passing. `QuoteDesk.Web`'s
+`node_modules` and `dist` are gitignored as usual; nothing else was left uncommitted.
+
+**Machine state for next session:** SQL Server container (`quotedesk-sql`) is up and seeded — no
+need to re-run `docker compose up -d` or the `--seed` flag unless the volume is removed. To browse
+the data directly (SSMS / Azure Data Studio / VS Code's mssql extension): server `localhost,1433`,
+SQL auth, login `sa`, password `QuoteDesk!Local1` (the `docker-compose.yml` local-dev default, not a
+real secret), check "Trust server certificate".
+
 **Blocked on Harsh:** Nothing.
 
 **Next:** Task 04 — intake abstraction and paste adapter.
