@@ -13,6 +13,7 @@ public class QuoteDeskDbContext(DbContextOptions<QuoteDeskDbContext> options) : 
     public DbSet<Enquiry> Enquiries => Set<Enquiry>();
     public DbSet<Quote> Quotes => Set<Quote>();
     public DbSet<QuoteLine> QuoteLines => Set<QuoteLine>();
+    public DbSet<AppUser> Users => Set<AppUser>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

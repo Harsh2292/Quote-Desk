@@ -92,8 +92,9 @@ parsing including malformed and empty payloads. Everything else is covered at in
 ## Frontend
 
 - **The `AgentEvent` union mirrors the C# contract exactly and changes in the same commit.**
-- **One typed hook wraps `EventSource`** (`useAgentStream`). Do not scatter `EventSource` across
-  components.
+- **One typed hook owns SSE parsing** (`useAgentStream`). It is built on `fetch` + `ReadableStream`,
+  not `EventSource` — auth is a bearer JWT (see Security below), and `EventSource` cannot send an
+  `Authorization` header. Do not scatter stream-reading logic across components.
 - **Every async surface renders loading, empty and error.** `provider_rate_limited` must render a
   useful message with the "replay a saved run" action — a recruiter on the live demo will hit it.
 - **No `any`.** TypeScript strict stays on.
@@ -105,7 +106,11 @@ parsing including malformed and empty payloads. Everything else is covered at in
 
 - **Secrets never enter the repo.** `dotnet user-secrets` locally, Container Apps secrets in
   production. `appsettings.json` holds key *names* and non-secret defaults only.
-- **Every `/api/*` route requires a valid JWT.** Only `/health/live` and `/health/ready` are anonymous.
+- **Every `/api/*` route requires a valid bearer JWT, enforced by a fallback authorization policy —
+  new endpoints are protected by default, not by remembering `[Authorize]`.** Google verifies the
+  user's identity; the Api mints its own short-lived JWT (`POST /api/auth/google`) rather than using
+  a session cookie, since a cookie would not survive the two-host split between Static Web Apps and
+  Container Apps. Only `POST /api/auth/google`, `/health/live` and `/health/ready` are anonymous.
 - **No raw SQL.** EF Core with LINQ. If raw SQL is genuinely needed, parameterise it via
   `FromSqlInterpolated` and say why first.
 - **Errors to the client are RFC 9457 `ProblemDetails`** — no stack traces, connection strings or

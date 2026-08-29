@@ -56,7 +56,7 @@ tool. Say that out loud — it is a better answer than having used one.
 | Telemetry | OpenTelemetry → Application Insights |
 | Frontend | React 19 + Vite + TypeScript + Tailwind, plain `fetch` |
 | Streaming | Server-Sent Events |
-| Auth | **Google OpenID Connect.** Still no user system to build — Google is the identity provider, sign-in is a redirect, and the app stores no password. Changed from the JWT-bearer/seeded-credential plan in task 01, on Harsh's instruction. |
+| Auth | **Google identity, own JWT.** React gets a Google ID token from Google Identity Services (`@react-oauth/google`) and posts it to `POST /api/auth/google`; the Api verifies it against Google (`Google.Apis.Auth`) and mints a short-lived bearer JWT (`Microsoft.AspNetCore.Authentication.JwtBearer`), checked on every route by a fallback authorization policy. Google is still the only identity provider and the app still stores no password — the one addition beyond task 01's plan is a `Users` table, auto-provisioned on first sign-in (§6), needed because a bearer token has to name *someone* server-side to check `role` against and to attribute `Quotes.ApprovedByUserId` to. Built ahead of schedule, before task 04, specifically so the fallback policy protects every endpoint from the moment it is written — see docs/SESSION-LOG.md. |
 | Tests | xUnit + FluentAssertions, in `tests/` |
 | CI/CD | GitHub Actions → Azure Container Apps + Static Web Apps |
 
@@ -76,6 +76,15 @@ record the resolved versions back here.
 | `@tailwindcss/vite` | 4.3.3 |
 | React | 19.2.8 |
 | Vite | 8.2.2 |
+
+**Resolved for the Google-identity/JWT auth work (done ahead of schedule, before task 04):**
+
+| Package | Version |
+|---|---|
+| `Microsoft.AspNetCore.Authentication.JwtBearer` | 10.0.11 |
+| `Google.Apis.Auth` | 1.76.0 |
+| `Microsoft.AspNetCore.Mvc.Testing` (IntegrationTests only) | 10.0.11 |
+| `@react-oauth/google` | see `src/QuoteDesk.Web/package.json` |
 
 `Microsoft.AspNetCore.OpenApi` was deliberately **not** added to `QuoteDesk.Api`: the version NuGet
 resolved for .NET 10 (2.0.0) pulls in a `Microsoft.OpenApi` with a known high-severity advisory,
@@ -164,12 +173,20 @@ PriceRules    (Id, Scope, Target, MinQty, DiscountPct)                          
 OrderHistory  (Id, CustomerId, Sku, Qty, UnitPrice, OrderedAt)                                 -- ~1200
 Enquiries     (Id, Channel, SenderId, RawBody, ReceivedAt, CustomerId, Status)                 -- 12 seeded
 Quotes        (Id, EnquiryId, Number, Status, Subtotal, Tax, Total, CreatedAt,
-               ApprovedBy, ApprovedAt, SentAt)                                                 -- empty
+               ApprovedByUserId, ApprovedAt, SentAt)                                           -- empty
 QuoteLines    (Id, QuoteId, Sku, Qty, UnitPrice, DiscountPct, LineTotal, Note)                 -- empty
+Users         (Id, GoogleSubject, Email, Name, PictureUrl, Role, CreatedAt, LastLoginAt)       -- empty
 ```
 
 `CostPrice` exists so margin can be checked. **It never leaves the server and never reaches the
 model** — enforced by a reflection test over tool result types, not by convention.
+
+`Users` is the one table this document did not originally plan for (§3, §9) — added ahead of
+schedule, before task 04, alongside Google sign-in. `GoogleSubject` (the `sub` claim) is the unique
+key a returning sign-in is matched on, never the email, which a Google account can change.
+`Quotes.ApprovedBy` — originally a free-text name — became `ApprovedByUserId int?` (FK, restrict
+delete) while the table was still empty, so the change was free; it names the actual signed-in
+salesperson who approves a quote rather than a string someone typed.
 
 Money columns are `decimal(18,2)`, configured explicitly. Read queries use `AsNoTracking()`. No entity
 type appears in a signature outside `QuoteDesk.Data`.
@@ -196,6 +213,8 @@ registry only.
 ## 8. API
 
 ```
+POST /api/auth/google                -> { token, expiresAt, user }         anonymous
+GET  /api/auth/me                    -> { id, email, name, pictureUrl, role }
 POST /api/enquiries                  -> { enquiryId }
 POST /api/enquiries/{id}/process     -> SSE stream of AgentEvent
 GET  /api/enquiries/{id}             -> transcript + full trace
@@ -224,6 +243,13 @@ type AgentEvent =
 Multi-tenancy · user registration · vector DB · real email or WhatsApp *sending* (render the PDF, log
 the send) · audio transcription · mobile layouts beyond "doesn't break" · admin panel · i18n ·
 WebSockets · microservices · more than two agent nodes · any second business domain.
+
+**"User registration" stays refused precisely** despite the `Users` table added in §6: there is no
+sign-up form, no password, no profile editing, no invite flow, and no admin UI to manage users. A row
+is created automatically the first time a Google account signs in, and that is the entire surface —
+one upsert, triggered by Google's own identity check, with nothing for a user to fill in. If a task
+ever proposes any of the things this paragraph just ruled out, that is scope creep and should be
+challenged the same way any other item on this list would be.
 
 ## 10. Scope
 

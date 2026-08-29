@@ -15,10 +15,14 @@ public class Quote
     public required decimal Tax { get; set; }
     public required decimal Total { get; set; }
     public required DateTimeOffset CreatedAt { get; set; }
-    public string? ApprovedBy { get; set; }
+
+    /// <summary>The signed-in salesperson who approved this quote. Null until approval.</summary>
+    public int? ApprovedByUserId { get; set; }
+
     public DateTimeOffset? ApprovedAt { get; set; }
     public DateTimeOffset? SentAt { get; set; }
 
+    public AppUser? ApprovedByUser { get; set; }
     public Enquiry? Enquiry { get; set; }
     public List<QuoteLine> Lines { get; set; } = [];
 }

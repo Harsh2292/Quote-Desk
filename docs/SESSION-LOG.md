@@ -229,3 +229,34 @@ real secret), check "Trust server certificate".
 **Blocked on Harsh:** Nothing.
 
 **Next:** Task 04 — intake abstraction and paste adapter.
+
+## 2026-08-29 — Task 04a: Google sign-in and a Users table
+
+**Done:** React gets a Google ID token and posts it to `POST /api/auth/google`; the Api verifies it
+against Google, auto-provisions a `Users` row keyed on the `sub` claim, and mints its own bearer JWT.
+Every route requires that token by default via a fallback authorization policy — `/health/*` and
+`/api/auth/google` are the only exceptions. Verified live: `/health/live` → 200, `/api/auth/me` with
+no token → 401, `/api/auth/google` with a bad token → 401 with a real Google JWKS round-trip and no
+exception text in the body. **Also verified through an actual browser**: Harsh signed in with a real
+Google account at `localhost:8080`, and the `Users` row landed correctly — `pharshin29@gmail.com`,
+role `admin` (matched from `Auth:AdminEmails`), `CreatedAt == LastLoginAt` on first sign-in.
+
+**Files that matter:** `src/QuoteDesk.Api/Program.cs` (auth wiring, the fallback-policy line),
+`src/QuoteDesk.Api/Auth/`, `tests/QuoteDesk.IntegrationTests/Api/QuoteDeskApiFactory.cs`.
+
+**Decisions made:** Pulled forward from task 07 so every endpoint from task 04 on is protected by
+construction. Bearer JWT, not a cookie — the prod split between Static Web Apps and Container Apps
+would break cookie auth, and `EventSource` (needed for SSE) can't send an `Authorization` header
+either way, so `useAgentStream` will use `fetch`+`ReadableStream` instead (CLAUDE.md updated).
+`docs/SPEC.md` §3/§9 and `tasks/task-07-api.md` updated in the same commit — this expands "no user
+system to build" by exactly one auto-provisioned table, nothing more.
+
+**Known gaps:** `WebApplicationFactory`'s `ConfigureAppConfiguration` is ineffective here — Program.cs
+reads config before `Build()` — so the test factory uses environment variables instead; found and
+fixed before it could touch the real dev database. No rate limit on `/api/auth/google` yet (task 07).
+
+**Blocked on Harsh:** Nothing. (`.claude/settings.json`'s `Read(./.env.*)` deny rule blocked writing
+`.env.example` — narrowed to `Read(./.env)` + `Read(./.env.local)` on his explicit instruction;
+`.env.example` now exists, `src/QuoteDesk.Web/.env.local` holds the real Client ID he created by hand.)
+
+**Next:** Task 04 — intake abstraction and paste adapter.

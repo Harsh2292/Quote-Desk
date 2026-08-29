@@ -23,6 +23,7 @@
     <ProjectReference Include="..\..\src\QuoteDesk.Domain\QuoteDesk.Domain.csproj" />
     <ProjectReference Include="..\..\src\QuoteDesk.Data\QuoteDesk.Data.csproj" />
     <ProjectReference Include="..\..\src\QuoteDesk.Intake\QuoteDesk.Intake.csproj" />
+    <ProjectReference Include="..\..\src\QuoteDesk.Api\QuoteDesk.Api.csproj" />
   </ItemGroup>
 
 </Project>

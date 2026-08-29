@@ -36,6 +36,32 @@ public sealed record PriceRuleRecord(int Id, string Scope, string Target, int Mi
 
 public sealed record OrderHistoryRecord(int Id, int CustomerId, string Sku, int Qty, decimal UnitPrice, DateTimeOffset OrderedAt);
 
+/// <summary>
+/// A signed-in salesperson. <see cref="GoogleSubject"/> is present because the Api layer matches on
+/// it; it is deliberately not part of any API response shape.
+/// </summary>
+public sealed record UserRecord(
+    int Id,
+    string GoogleSubject,
+    string Email,
+    string Name,
+    string? PictureUrl,
+    string Role,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset LastLoginAt);
+
+/// <summary>
+/// Everything needed to create or refresh a user from one Google sign-in. <see cref="SignedInAt"/>
+/// is passed in rather than read from the clock, so the write is deterministic under test.
+/// </summary>
+public sealed record GoogleUserUpsert(
+    string GoogleSubject,
+    string Email,
+    string Name,
+    string? PictureUrl,
+    string Role,
+    DateTimeOffset SignedInAt);
+
 public sealed record EnquiryRecord(
     int Id,
     string Channel,

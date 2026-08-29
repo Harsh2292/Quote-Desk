@@ -16,11 +16,15 @@ public class QuoteConfiguration : IEntityTypeConfiguration<Quote>
         builder.Property(q => q.Subtotal).HasColumnType("decimal(18,2)");
         builder.Property(q => q.Tax).HasColumnType("decimal(18,2)");
         builder.Property(q => q.Total).HasColumnType("decimal(18,2)");
-        builder.Property(q => q.ApprovedBy).HasMaxLength(200);
-
         builder.HasOne(q => q.Enquiry)
             .WithMany()
             .HasForeignKey(q => q.EnquiryId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Restrict, not Cascade: deleting a user must never delete the quotes they approved.
+        builder.HasOne(q => q.ApprovedByUser)
+            .WithMany()
+            .HasForeignKey(q => q.ApprovedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasMany(q => q.Lines)

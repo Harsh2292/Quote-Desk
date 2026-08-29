@@ -37,10 +37,19 @@ type AgentEvent =
   | { type: 'error';      code: 'provider_rate_limited'|'budget_exceeded'|'internal'; message: string }
 ```
 
-- Google OpenID Connect on every `/api/*` route — sign in with Google, no seeded credential, no
-  password, still **no user system to build** (changed from the original JWT-bearer plan; see
-  docs/SPEC.md §3). Harsh creates the OAuth client in Google Cloud Console when this task starts;
-  the client secret goes to `dotnet user-secrets`, never the repo.
+- ~~Google OpenID Connect on every `/api/*` route~~ — **done ahead of schedule, before task 04.**
+  React gets a Google ID token and posts it to `POST /api/auth/google`; the Api verifies it against
+  Google (`Google.Apis.Auth`) and mints its own short-lived JWT, checked by
+  `Microsoft.AspNetCore.Authentication.JwtBearer` against a fallback authorization policy that
+  requires an authenticated user on every route by default. A `Users` table (`QuoteDesk.Data`,
+  migration `AddUsers`) is auto-provisioned on first sign-in — see docs/SPEC.md §3 and §6 for the
+  final shape, and docs/SESSION-LOG.md for why this moved earlier: doing it before any endpoint
+  existed meant every endpoint from task 04 onward is protected by construction, not by a retrofit
+  across eight routes. This task still owns rate limiting the `/api/auth/google` route (see below)
+  and, if the endpoints below need anything more than "authenticated", the `[Authorize(Roles: ...)]`
+  checks for it.
+- `POST /api/auth/google` is anonymous and calls Google's JWKS endpoint on every miss — include it
+  in the per-IP rate limit below rather than treating only `/api/enquiries` as attack surface.
 - Rate limiting per IP and per token, plus a hard daily cap for the public demo
 - Global exception handler producing RFC 9457 `ProblemDetails` — no stack traces, no connection
   strings, no inner exception text
@@ -50,7 +59,8 @@ type AgentEvent =
 
 ## Acceptance criteria
 
-- [ ] Every endpoint implemented; all `/api/*` require a valid token
+- [ ] Every endpoint implemented; all `/api/*` require a valid token (auth itself is already done —
+      see the note above; this criterion is now about the new endpoints actually sitting behind it)
 - [ ] SSE emits every `AgentEvent` variant, verified by an integration test
 - [ ] C# and TypeScript event types match, checked by eye and noted here
 - [ ] Rate limiter returns 429 with `ProblemDetails` under test

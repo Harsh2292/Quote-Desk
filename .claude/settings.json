@@ -53,7 +53,7 @@
       "Bash(git reset --hard:*)",
       "Bash(dotnet nuget push:*)",
       "Read(./.env)",
-      "Read(./.env.*)",
+      "Read(./.env.local)",
       "Read(./secrets/**)",
       "Read(./**/appsettings.Development.json)",
       "Read(./**/appsettings.Local.json)"
