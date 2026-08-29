@@ -14,7 +14,19 @@ public class Quote
     public required decimal Subtotal { get; set; }
     public required decimal Tax { get; set; }
     public required decimal Total { get; set; }
+    public required decimal Freight { get; set; }
     public required DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>15 days from issue, per docs/DOMAIN.md.</summary>
+    public required DateTimeOffset ValidUntil { get; set; }
+
+    /// <summary>The customer's stated delivery destination for this quote, once the Extract stage
+    /// (task 06) supplies one. Null until then.</summary>
+    public string? ShipTo { get; set; }
+
+    /// <summary>The date the customer asked for, as written in the enquiry (e.g. "need by 5th"),
+    /// once the Extract stage supplies one. Null until then.</summary>
+    public DateOnly? RequiredBy { get; set; }
 
     /// <summary>The signed-in salesperson who approved this quote. Null until approval.</summary>
     public int? ApprovedByUserId { get; set; }

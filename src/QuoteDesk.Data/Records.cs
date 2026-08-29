@@ -70,3 +70,75 @@ public sealed record EnquiryRecord(
     DateTimeOffset ReceivedAt,
     int? CustomerId,
     string Status);
+
+/// <summary>Everything needed to persist one freshly ingested enquiry. <c>Channel</c> and
+/// <c>Status</c> are plain strings here — the enum and status constants they came from belong to
+/// QuoteDesk.Intake, which converts before calling <see cref="Repositories.IEnquiryRepository.CreateAsync"/>.</summary>
+public sealed record NewEnquiry(
+    string Channel,
+    string SenderId,
+    string RawBody,
+    DateTimeOffset ReceivedAt,
+    int? CustomerId,
+    string Status);
+
+/// <summary>One line of a quote being created. <c>UnitPrice</c> is the already-discounted net price
+/// — the same rounding rule as <see cref="QuoteDesk.Domain.PricedLine.NetUnitPrice"/> — never a list
+/// price with the discount applied separately downstream.</summary>
+public sealed record NewQuoteLine(
+    string Sku,
+    int Qty,
+    decimal UnitPrice,
+    decimal DiscountPct,
+    decimal LineTotal,
+    bool RequiresOverride,
+    DateOnly? DispatchDate,
+    DateOnly? DeliveryDate,
+    string? Note);
+
+/// <summary>Everything needed to persist one freshly created quote draft. <c>Status</c> is a plain
+/// string — the write tool that calls <see cref="Repositories.IQuoteRepository.CreateDraftAsync"/>
+/// owns the vocabulary of valid values, the same pattern QuoteDesk.Intake uses for
+/// <see cref="NewEnquiry.Status"/>.</summary>
+public sealed record NewQuote(
+    int EnquiryId,
+    string Status,
+    decimal Subtotal,
+    decimal Freight,
+    decimal Tax,
+    decimal Total,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset ValidUntil,
+    string? ShipTo,
+    DateOnly? RequiredBy,
+    IReadOnlyList<NewQuoteLine> Lines);
+
+public sealed record QuoteLineRecord(
+    int Id,
+    string Sku,
+    int Qty,
+    decimal UnitPrice,
+    decimal DiscountPct,
+    decimal LineTotal,
+    bool RequiresOverride,
+    DateOnly? DispatchDate,
+    DateOnly? DeliveryDate,
+    string? Note);
+
+public sealed record QuoteRecord(
+    int Id,
+    int EnquiryId,
+    string Number,
+    string Status,
+    decimal Subtotal,
+    decimal Freight,
+    decimal Tax,
+    decimal Total,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset ValidUntil,
+    string? ShipTo,
+    DateOnly? RequiredBy,
+    int? ApprovedByUserId,
+    DateTimeOffset? ApprovedAt,
+    DateTimeOffset? SentAt,
+    IReadOnlyList<QuoteLineRecord> Lines);

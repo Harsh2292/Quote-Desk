@@ -288,13 +288,23 @@ namespace QuoteDesk.Data.Migrations
                     b.Property<int>("EnquiryId")
                         .HasColumnType("int");
 
+                    b.Property<decimal>("Freight")
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<string>("Number")
                         .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<DateOnly?>("RequiredBy")
+                        .HasColumnType("date");
 
                     b.Property<DateTimeOffset?>("SentAt")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ShipTo")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -309,6 +319,9 @@ namespace QuoteDesk.Data.Migrations
 
                     b.Property<decimal>("Total")
                         .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTimeOffset>("ValidUntil")
+                        .HasColumnType("datetimeoffset");
 
                     b.HasKey("Id");
 
@@ -330,8 +343,14 @@ namespace QuoteDesk.Data.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<DateOnly?>("DeliveryDate")
+                        .HasColumnType("date");
+
                     b.Property<decimal>("DiscountPct")
                         .HasColumnType("decimal(5,4)");
+
+                    b.Property<DateOnly?>("DispatchDate")
+                        .HasColumnType("date");
 
                     b.Property<decimal>("LineTotal")
                         .HasColumnType("decimal(18,2)");
@@ -345,6 +364,9 @@ namespace QuoteDesk.Data.Migrations
 
                     b.Property<int>("QuoteId")
                         .HasColumnType("int");
+
+                    b.Property<bool>("RequiresOverride")
+                        .HasColumnType("bit");
 
                     b.Property<string>("Sku")
                         .IsRequired()

@@ -9,13 +9,17 @@ public class QuoteConfiguration : IEntityTypeConfiguration<Quote>
     public void Configure(EntityTypeBuilder<Quote> builder)
     {
         builder.HasKey(q => q.Id);
-        builder.Property(q => q.Number).HasMaxLength(30).IsRequired();
+        // 40, not 30: QuoteRepository briefly stores a GUID-based placeholder here before the real
+        // "QTN-{year}-{id}" value is known, so the column needs room for that placeholder too.
+        builder.Property(q => q.Number).HasMaxLength(40).IsRequired();
         builder.HasIndex(q => q.Number).IsUnique();
 
         builder.Property(q => q.Status).HasMaxLength(20).IsRequired();
         builder.Property(q => q.Subtotal).HasColumnType("decimal(18,2)");
         builder.Property(q => q.Tax).HasColumnType("decimal(18,2)");
         builder.Property(q => q.Total).HasColumnType("decimal(18,2)");
+        builder.Property(q => q.Freight).HasColumnType("decimal(18,2)");
+        builder.Property(q => q.ShipTo).HasMaxLength(200);
         builder.HasOne(q => q.Enquiry)
             .WithMany()
             .HasForeignKey(q => q.EnquiryId)

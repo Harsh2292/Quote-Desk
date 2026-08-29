@@ -40,16 +40,60 @@ Rules:
 
 ## Acceptance criteria
 
-- [ ] All seven tools implemented and registered via `AIFunctionFactory.Create`
-- [ ] `get_customer_history` resolves "same as last time" against the seeded 2RS purchases
-- [ ] `search_catalog` returns ambiguous for "the thicker one" with both variants listed
-- [ ] Reflection test proves no cost or margin field is reachable from any tool result
-- [ ] Test proves `ReadToolRegistry` contains zero write tools
-- [ ] Unit tests on every tool's validation and miss paths
-- [ ] No EF entity type escapes `QuoteDesk.Data`
+- [x] All seven tools implemented and registered via `AIFunctionFactory.Create`
+- [x] `get_customer_history` resolves "same as last time" against the seeded 2RS purchases
+- [x] `search_catalog` returns ambiguous for "the thicker one" with both variants listed
+- [x] Reflection test proves no cost or margin field is reachable from any tool result
+- [x] Test proves `ReadToolRegistry` contains zero write tools
+- [x] Unit tests on every tool's validation and miss paths
+- [x] No EF entity type escapes `QuoteDesk.Data`
 
 ## Out of scope
 
 Agents, workflow, prompts, the API.
 
 ## Notes on completion
+
+Built as planned, plus a small migration: `AddQuoteDetails` adds `Quotes.Freight/ValidUntil/ShipTo/
+RequiredBy` and `QuoteLines.RequiresOverride/DispatchDate/DeliveryDate` — both tables were still
+empty, so the change was free. `IQuoteRepository`/`QuoteRepository` joined the other five read
+repositories in `QuoteDesk.Data`. `docs/SPEC.md` §6 and §7 were corrected in the same commit:
+`search_catalog` returns `CatalogSearchResult` (an array cannot say "ambiguous"), `price_quote` takes
+`int? customerId` (docs/DOMAIN.md's "Unknown sender" rule needs somewhere to hang), and
+`create_quote_draft` returns `QuoteDraftResult` (a typed miss, matching every other tool).
+
+**`MarginShortfallPct` is deliberately not carried through to any tool result or stored column** —
+only `RequiresOverride` (a bool) survives from `QuoteDesk.Domain.PricedLine` into
+`Agents.Tools.Results.PricedQuoteLine` and the `QuoteLines` table. It is a margin figure, and
+docs/DOMAIN.md says the model may never see one; the approval card only needs to know a line needs
+an override, not by how much. `docs/SPEC.md` §6 records this as a deliberate omission, not an
+oversight, so a future session doesn't "fix" it by threading margin data toward the model.
+
+**`[AIFunctionName]` was not used** — despite being the natural way to give a tool its snake_case
+name, `Microsoft.Extensions.AI.Abstractions` 10.9.0 marks that attribute `[Experimental("MEAI001")]`,
+which `-warnaserror` turns into a build failure. `ReadToolRegistry`/`WriteToolRegistry` instead pass
+`AIFunctionFactoryOptions { Name = "..." }` to `AIFunctionFactory.Create`, which is not experimental
+and produces the identical result. Descriptions still come from `[System.ComponentModel.Description]`
+on each method and parameter — confirmed against the installed package's XML docs (not read by
+anything at runtime, contrary to the task file's original text, since `GenerateDocumentationFile` is
+`false` in this repo; `AIFunctionFactory` reads `DescriptionAttribute` via reflection instead, which
+needs no XML doc file at all).
+
+**`search_catalog`'s scoring** unions the repository's single-substring `SearchAsync` across every
+token of `query` and every hint (not just `query` verbatim, which routinely matches nothing — e.g.
+"6203 bearings" is not a contiguous substring of "6203 Series Ball Bearing (2RS)"), then scores each
+candidate by the fraction of tokens it matches. This is what makes "ring frame spindle tape" +
+["thicker"] come back ambiguous across all eight seeded thickness variants (docs/DOMAIN.md's case)
+without hardcoding anything about spindle tapes specifically — the same token-overlap math also
+resolves "25mm PU timing belt" to one SKU and "6203 bearings" to an ambiguous set of four suffix
+variants (2RS/ZZ/RS/2Z), which is correct: only order history (task 06) can break that tie, matching
+how the worked example actually resolves it.
+
+**Found and fixed while writing the integration tests:** the same fixture race from task 04 recurred
+— `RepositoryTests` and the new `ToolsIntegrationTests` each declared their own
+`IClassFixture<RepositoryFixture>` against the fixed `QuoteDeskTests_Repository` database name. Fixed
+the same way: both now share one `[Collection("Repository")]`. Any future test class using
+`RepositoryFixture` must join this collection too.
+
+120/120 tests passing (91 unit + 29 integration, combined with task 04's totals), 0 warnings under
+`-warnaserror`. `npm run build` still passes (untouched by this task).

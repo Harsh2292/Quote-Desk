@@ -260,3 +260,71 @@ fixed before it could touch the real dev database. No rate limit on `/api/auth/g
 `.env.example` now exists, `src/QuoteDesk.Web/.env.local` holds the real Client ID he created by hand.)
 
 **Next:** Task 04 — intake abstraction and paste adapter.
+
+## 2026-08-29 — Tasks 04 + 05: intake, paste adapter, and the seven typed tools
+
+**Done:** `POST /api/enquiries` stores a pasted enquiry (behind the task 04a auth policy) via
+`QuoteDesk.Intake`'s `PasteAdapter`, blank-body-with-attachments correctly landing on
+`needs_manual_entry`. All seven tools from docs/SPEC.md §7 now exist in `QuoteDesk.Agents.Tools` as
+plain, fully-tested C# — `search_catalog` resolves "25mm PU belt" cleanly and comes back ambiguous
+for "ring frame spindle tape" + "thicker" across all eight seeded thicknesses;
+`price_quote` reproduces the worked example's 8%/14% exactly; `create_quote_draft`/`send_quote`
+round-trip a quote to `sent` with a `QTN-` number. No agent or LLM call exists yet — these are still
+ordinary methods with tests, called directly.
+
+**Files that matter:** `src/QuoteDesk.Agents/Tools/` (all seven tools + both registries),
+`src/QuoteDesk.Intake/PasteAdapter.cs`, `docs/SPEC.md` §6/§7 (three signature corrections, explained
+inline), `tasks/task-04-intake.md` and `task-05-tools.md` Notes on completion (full detail).
+
+**Decisions made:** `search_catalog` returns `CatalogSearchResult` not `CatalogMatch[]`;
+`price_quote` takes `int? customerId` for the unknown-sender case; `create_quote_draft` returns a
+typed `QuoteDraftResult`. `MarginShortfallPct` is never carried past `QuoteDesk.Domain` — only the
+`RequiresOverride` bool reaches any tool result or column. `[AIFunctionName]` avoided (marked
+`[Experimental("MEAI001")]` in `Microsoft.Extensions.AI.Abstractions` 10.9.0); tool names set via
+`AIFunctionFactoryOptions.Name` instead. Two xUnit test classes hitting the same fixed test-database
+name in separate `IClassFixture`s race each other under parallel execution — fixed twice this
+session (Api tests, then Repository tests) by sharing one `[Collection(...)]`; **any new test class
+using `QuoteDeskApiFactory` or `RepositoryFixture` must join the existing collection, not declare its
+own `IClassFixture`.**
+
+**Known gaps:** `Quotes.ShipTo`/`RequiredBy` stay null — no Extract stage exists yet to populate them
+(task 06). `EnquiryAttachment` is a shape only, no table — task 10 adds storage when a real channel
+can attach a file. No agent, workflow, or prompt exists — task 06 is the first place an LLM is called
+outside the task 00 spike.
+
+**Blocked on Harsh:** Nothing.
+
+**Next:** Task 06 — agents and workflow. Wires `ReadToolRegistry` to an actual `AIAgent` for the
+Resolve stage; everything it will call already exists and is proven.
+
+## 2026-08-29 — Post-task-05 review: closed a real error-handling gap
+
+**Done:** Harsh asked for a review pass before task 06, specifically about exception handling. Found
+`QuoteDesk.Api` had **no global exception handler at all** — any unhandled exception (a DB hiccup, a
+malformed request) fell through to ASP.NET Core's raw error response instead of the RFC 9457
+`ProblemDetails` CLAUDE.md's Security section requires, and in Development/test it leaked a full
+stack trace. Reproduced concretely: two Google sign-ins with the same email but different subjects
+throws `DbUpdateException` uncaught by `AuthEndpoints`, which used to 500 with exception text in the
+body. Fixed with `builder.Services.AddProblemDetails()` + `app.UseExceptionHandler()` as the first
+middleware in the pipeline, and locked in with a new regression test that reproduces exactly that
+trigger and asserts the response body contains no exception type, stack frame, or index name. Also
+added two missing `ArgumentNullException.ThrowIfNull` guards (`CatalogTools.SearchCatalogAsync`'s
+`query`/`hints`, `CustomerTools.ResolveCustomerAsync`'s `senderId`) — the only two tool parameters
+touched directly (string concatenation, `.IndexOf`) before any null check, unlike every other
+array/object parameter this session, which all already guarded consistently.
+
+**Files that matter:** `src/QuoteDesk.Api/Program.cs` (the two new lines),
+`tests/QuoteDesk.IntegrationTests/Api/GlobalExceptionHandlingTests.cs`.
+
+**Decisions made:** Harsh confirmed mid-review: build the MVP only for now, defer further
+production-grade hardening (rate limiting, deeper input validation, etc.) until after it works end to
+end — matching the standing `completion-over-sophistication` preference. This exception-handler fix
+was treated as in-scope regardless, since it is an explicit CLAUDE.md rule already in force, not new
+hardening; no further defensive-programming pass was done beyond the two guards above.
+
+**Known gaps:** Same as the entry above — nothing new introduced by this review. 124/124 tests
+passing (94 unit + 30 integration), 0 warnings under `-warnaserror`.
+
+**Blocked on Harsh:** Nothing.
+
+**Next:** Task 06 — agents and workflow, unchanged from above.

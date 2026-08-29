@@ -9,7 +9,8 @@ namespace QuoteDesk.IntegrationTests.Data;
 /// Also proves every deliberate seed case from tasks/task-02-data-efcore.md is individually
 /// queryable.
 /// </summary>
-public class RepositoryTests(RepositoryFixture fixture) : IClassFixture<RepositoryFixture>
+[Collection("Repository")]
+public class RepositoryTests(RepositoryFixture fixture)
 {
     [Fact]
     public async Task Catalog_NearIdenticalBearingSkus_AreBothIndividuallyQueryable()

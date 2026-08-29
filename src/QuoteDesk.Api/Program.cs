@@ -6,9 +6,12 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using QuoteDesk.Agents;
 using QuoteDesk.Api.Auth;
+using QuoteDesk.Api.Enquiries;
 using QuoteDesk.Data;
 using QuoteDesk.Data.Seed;
+using QuoteDesk.Intake;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -22,6 +25,14 @@ var connectionString = builder.Configuration.GetConnectionString("QuoteDesk")
     ?? throw new InvalidOperationException("Missing ConnectionStrings:QuoteDesk. Set it with dotnet user-secrets.");
 
 builder.Services.AddQuoteDeskData(connectionString);
+builder.Services.AddQuoteDeskIntake();
+builder.Services.AddQuoteDeskAgents();
+
+// Together, these turn every unhandled exception into a generic RFC 9457 ProblemDetails 500 — no
+// stack trace, no exception message, no connection string, per CLAUDE.md's Security rules. This
+// also overrides the Development-only exception page ASP.NET Core would otherwise inject, so the
+// same behaviour holds locally, under test, and in production.
+builder.Services.AddProblemDetails();
 
 builder.Services.AddHealthChecks()
     .AddSqlServer(connectionString, name: "database");
@@ -96,6 +107,9 @@ if (args.Contains("--seed", StringComparer.Ordinal))
     return;
 }
 
+// First in the pipeline so it wraps every other middleware, including logging and auth.
+app.UseExceptionHandler();
+
 app.UseSerilogRequestLogging();
 
 if (authOptions.AllowedOrigins.Count > 0)
@@ -117,6 +131,7 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions
 app.MapHealthChecks("/health/ready").AllowAnonymous();
 
 app.MapAuthEndpoints();
+app.MapEnquiryEndpoints();
 
 app.Run();
 

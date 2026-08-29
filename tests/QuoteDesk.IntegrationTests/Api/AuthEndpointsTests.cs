@@ -13,7 +13,8 @@ namespace QuoteDesk.IntegrationTests.Api;
 /// Exercises the Google sign-in endpoint and the fallback authorization policy end to end, against
 /// the real pipeline in <c>Program.cs</c> via <see cref="QuoteDeskApiFactory"/>.
 /// </summary>
-public class AuthEndpointsTests(QuoteDeskApiFactory factory) : IClassFixture<QuoteDeskApiFactory>
+[Collection("QuoteDeskApi")]
+public class AuthEndpointsTests(QuoteDeskApiFactory factory)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 

@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\QuoteDesk.Api\QuoteDesk.Api.csproj" />
     <ProjectReference Include="..\..\src\QuoteDesk.Data\QuoteDesk.Data.csproj" />
+    <ProjectReference Include="..\..\src\QuoteDesk.Agents\QuoteDesk.Agents.csproj" />
   </ItemGroup>
 
 </Project>

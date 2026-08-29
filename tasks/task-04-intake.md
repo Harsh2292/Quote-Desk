@@ -34,12 +34,12 @@ public sealed record IncomingEnquiry
 
 ## Acceptance criteria
 
-- [ ] `IncomingEnquiry` is the only shape any downstream code sees; `EnquiryChannel` never appears in
+- [x] `IncomingEnquiry` is the only shape any downstream code sees; `EnquiryChannel` never appears in
       `QuoteDesk.Agents`
-- [ ] Pasting the worked example from `docs/DOMAIN.md` stores an enquiry and returns its id
-- [ ] An attachment-only enquiry stores as `needs_manual_entry` rather than erroring
-- [ ] Unit tests on adapter parsing, including empty body, whitespace-only body, and a body of 50KB
-- [ ] Adding a new channel later requires no change outside `QuoteDesk.Intake`
+- [x] Pasting the worked example from `docs/DOMAIN.md` stores an enquiry and returns its id
+- [x] An attachment-only enquiry stores as `needs_manual_entry` rather than erroring
+- [x] Unit tests on adapter parsing, including empty body, whitespace-only body, and a body of 50KB
+- [x] Adding a new channel later requires no change outside `QuoteDesk.Intake`
 
 ## Out of scope
 
@@ -47,3 +47,30 @@ Email and WhatsApp adapters — those are task 09. Building this abstraction now
 half a task instead of a rewrite.
 
 ## Notes on completion
+
+Built as planned: `IncomingEnquiry`, `EnquiryChannel`, `EnquiryAttachment` and `IEnquiryIntakeAdapter`
+live in `QuoteDesk.Intake` with a single `PasteAdapter` implementation; `EnquiryStatusRule` is the
+one place the "blank body → `needs_manual_entry`" decision is made, shared by every future adapter.
+`IEnquiryRepository` gained `CreateAsync` (it was read-only since task 02). `POST /api/enquiries`
+sits behind the fallback auth policy from task 04a with no extra wiring — that was the point of
+building auth first. `CustomerId` is left null at intake deliberately: matching a sender to a
+customer is `resolve_customer`'s job in the Resolve stage (task 06), not intake's.
+
+Attachments are a shape only, on purpose — no `EnquiryAttachments` table exists yet, since the paste
+channel can never produce one. Task 10 adds storage when email and WhatsApp actually deliver files.
+
+**Boundary enforced by a test, not just a comment:** `IntakeBoundaryTests` scans every `.cs` file
+under `QuoteDesk.Agents` and `QuoteDesk.Api` for the literal string `EnquiryChannel` and fails if it
+appears — the acceptance criterion is checked mechanically, in the style of `DomainPurityTests`.
+
+**Found and fixed while writing the integration tests:** `AuthEndpointsTests` and the new
+`EnquiryEndpointsTests` each declared their own `IClassFixture<QuoteDeskApiFactory>`, so xUnit ran
+them in separate collections in parallel — two factories racing to `EnsureDeleted`/`Migrate` the same
+`QuoteDeskTests_Api` database at once, intermittently failing with "Database already exists" or, once
+serialized onto one shared instance, a real bug: my new tests reused `kiran@shreejitextiles.example`,
+a literal `AuthEndpointsTests` already provisions with a different Google subject, colliding on
+`Users.IX_Users_Email`. Fixed by sharing one `[Collection("QuoteDeskApi")]` fixture across every
+Api-hitting test class, and giving every test a distinct email. Any future `QuoteDeskApiFactory` test
+class must join this same collection, not declare its own `IClassFixture`.
+
+78/78 tests passing (52 unit + 26 integration), 0 warnings under `-warnaserror`.

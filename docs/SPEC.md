@@ -91,6 +91,14 @@ resolved for .NET 10 (2.0.0) pulls in a `Microsoft.OpenApi` with a known high-se
 which fails `-warnaserror`'s `NU1903` check. Task 01 needs no Swagger UI, so the package was dropped
 rather than suppressed; revisit if a later task genuinely needs OpenAPI generation.
 
+**Resolved for task 05's tools:** `Microsoft.Extensions.AI.Abstractions` **10.9.0**, added to
+`QuoteDesk.Agents` only — `AIFunctionFactory` and `AIFunction` live there, and that is all task 05
+needs. The full `Microsoft.Extensions.AI` package (an `IChatClient` and friends) is deferred to
+task 06, when an actual chat client is wired up. Tool names are set via
+`AIFunctionFactoryOptions.Name` rather than `[AIFunctionName]`, since that attribute is marked
+`[Experimental("MEAI001")]` in this version and `-warnaserror` treats it as a build error; the
+options-based name is not experimental and produces an identical result.
+
 ## 4. LLM provider — free, and swappable
 
 Both providers speak the OpenAI wire protocol, so the difference is one endpoint:
@@ -172,9 +180,10 @@ StockLevels   (Sku, OnHand, LeadTimeDays, ReorderLevel)                         
 PriceRules    (Id, Scope, Target, MinQty, DiscountPct)                                         -- ~40
 OrderHistory  (Id, CustomerId, Sku, Qty, UnitPrice, OrderedAt)                                 -- ~1200
 Enquiries     (Id, Channel, SenderId, RawBody, ReceivedAt, CustomerId, Status)                 -- 12 seeded
-Quotes        (Id, EnquiryId, Number, Status, Subtotal, Tax, Total, CreatedAt,
-               ApprovedByUserId, ApprovedAt, SentAt)                                           -- empty
-QuoteLines    (Id, QuoteId, Sku, Qty, UnitPrice, DiscountPct, LineTotal, Note)                 -- empty
+Quotes        (Id, EnquiryId, Number, Status, Subtotal, Freight, Tax, Total, CreatedAt,
+               ValidUntil, ShipTo, RequiredBy, ApprovedByUserId, ApprovedAt, SentAt)            -- empty
+QuoteLines    (Id, QuoteId, Sku, Qty, UnitPrice, DiscountPct, LineTotal,
+               RequiresOverride, DispatchDate, DeliveryDate, Note)                              -- empty
 Users         (Id, GoogleSubject, Email, Name, PictureUrl, Role, CreatedAt, LastLoginAt)       -- empty
 ```
 
@@ -188,6 +197,13 @@ key a returning sign-in is matched on, never the email, which a Google account c
 delete) while the table was still empty, so the change was free; it names the actual signed-in
 salesperson who approves a quote rather than a string someone typed.
 
+`Quotes.Freight/ValidUntil` and `QuoteLines.RequiresOverride/DispatchDate/DeliveryDate` were added
+in task 05's `AddQuoteDetails` migration — both tables were still empty, so the change was free.
+`Quotes.ShipTo` and `Quotes.RequiredBy` exist for the Extract stage (task 06) to populate from the
+enquiry text; `create_quote_draft` leaves them null until then. `RequiresOverride` is stored, but
+`MarginShortfallPct` deliberately is not — it is a margin figure, which must never leave the server
+(§7 below), and the approval card only needs to know a line needs an override, not by how much.
+
 Money columns are `decimal(18,2)`, configured explicitly. Read queries use `AsNoTracking()`. No entity
 type appears in a signature outside `QuoteDesk.Data`.
 
@@ -196,19 +212,35 @@ type appears in a signature outside `QuoteDesk.Data`.
 | Tool | Signature | Write? |
 |---|---|---|
 | `resolve_customer` | `(string companyName, string senderId) -> CustomerMatch` | no |
-| `search_catalog` | `(string query, string[] hints) -> CatalogMatch[]` | no |
+| `search_catalog` | `(string query, string[] hints) -> CatalogSearchResult` | no |
 | `get_customer_history` | `(int customerId, string? sku) -> PriorPurchase[]` | no |
 | `check_stock` | `(string sku, int qty) -> StockResult` | no |
-| `price_quote` | `(int customerId, QuoteLineRequest[] lines) -> PricedQuote` | no |
-| `create_quote_draft` | `(int enquiryId, PricedQuote quote) -> QuoteId` | **gated** |
+| `price_quote` | `(int? customerId, QuoteLineRequest[] lines) -> PricedQuote` | no |
+| `create_quote_draft` | `(int enquiryId, PricedQuote quote) -> QuoteDraftResult` | **gated** |
 | `send_quote` | `(int quoteId) -> SendResult` | **gated** |
+
+**Two signatures corrected during task 05, in the same commit as the code:**
+
+- **`search_catalog` returns `CatalogSearchResult`, not a bare `CatalogMatch[]`.** An array has no
+  way to say "I cannot tell which of these you mean" — `CatalogSearchResult { Outcome, ResolvedSku?,
+  Candidates[], Reason }` carries that explicitly. `Outcome` is `resolved` / `ambiguous` / 
+  `not_found`; candidates always carry a confidence and a reason, and the tool never picks one
+  arbitrarily when several score within 0.2 of each other.
+- **`price_quote` takes `int? customerId`, not `int`.** docs/DOMAIN.md's "Unknown sender" rule — list
+  price and the quantity discount still apply even when nothing matched — has nowhere to be
+  expressed if the tool cannot be called without a customer at all.
+- **`create_quote_draft` returns `QuoteDraftResult`, not a bare `QuoteId`.** Consistent with every
+  other tool's validation style (a typed miss, never an exception) — an unknown enquiry or an empty
+  line list returns `Created = false` with a `Reason` rather than throwing.
 
 `search_catalog` returns candidates with a confidence and a reason, and an explicit ambiguous result
 when it cannot choose. `get_customer_history` is what resolves "same as last time" — the tool that
 makes the demo feel intelligent. `price_quote` calls `QuoteDesk.Domain` and nothing else.
 
-Read and write registries are separate objects; the Resolve agent is constructed with the read
-registry only.
+Read and write registries are separate objects (`ReadToolRegistry`, `WriteToolRegistry` in
+`QuoteDesk.Agents.Tools`); the Resolve agent is constructed with the read registry only — enforced by
+a test that constructs `ReadToolRegistry` and asserts neither write tool's name appears in it, not
+just by the two classes being separate.
 
 ## 8. API
 

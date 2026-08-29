@@ -17,6 +17,7 @@ public sealed class RepositoryFixture : IAsyncLifetime
     public IOrderHistoryRepository OrderHistory { get; private set; } = null!;
     public IPriceRuleRepository PriceRules { get; private set; } = null!;
     public IEnquiryRepository Enquiries { get; private set; } = null!;
+    public IQuoteRepository Quotes { get; private set; } = null!;
 
     private QuoteDeskDbContext _db = null!;
 
@@ -33,6 +34,7 @@ public sealed class RepositoryFixture : IAsyncLifetime
         OrderHistory = new OrderHistoryRepository(_db);
         PriceRules = new PriceRuleRepository(_db);
         Enquiries = new EnquiryRepository(_db);
+        Quotes = new QuoteRepository(_db);
     }
 
     public async Task DisposeAsync() => await _db.DisposeAsync();
