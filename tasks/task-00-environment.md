@@ -41,28 +41,19 @@ dotnet --version     # need 10.x
 node --version       # need 20+
 docker --version     # and confirm the daemon is actually running
 git --version
-jq --version
 ```
 
 Then:
 
-- **`chmod +x .claude/hooks/*.sh`** — do this first, before anything else. The hooks are currently
-  inert. They come alive on the *next* start of Claude Code, so mention that to Harsh at the end.
 - **`dotnet tool install --global dotnet-ef`** if it is missing — needed at task 02.
 
-**What you can fix yourself:** the chmod, the dotnet-ef tool.
+**What you can fix yourself:** installing the `dotnet-ef` tool.
 
 **What only Harsh can do** — list these clearly rather than attempting them, since they need a
 GUI or admin rights:
 
 - installing the .NET 10 SDK, Node 20+, or Docker Desktop
 - starting Docker Desktop if the daemon is down
-- installing `jq` (`winget install jqlang.jq` on Windows, `brew install jq` on macOS,
-  `sudo apt install jq` on Linux and WSL)
-
-**`jq` matters more than it looks.** The guard hooks parse JSON with it; without `jq` they exit
-silently and the secret protection is gone. If it is missing, say so plainly and do not treat it as
-a minor note.
 
 If anything essential is missing, stop and tell Harsh. Do not work around a missing SDK.
 
@@ -70,17 +61,10 @@ If anything essential is missing, stop and tell Harsh. Do not work around a miss
 
 ## Part 3 — Initialise the repository
 
-```bash
-git init
-git add -A
-git commit -m "chore: project setup"
-```
-
-Then ask Harsh whether to create the GitHub repo. If yes:
-
-```bash
-gh repo create quotedesk --public --source=. --push
-```
+The repository is already initialised and on the `development` branch. Stage work with `git add`;
+**never run `git commit` or `git push`** — write the conventional-commit message out and let Harsh
+run it. The same applies to creating the GitHub repo (`gh repo create quotedesk --public`): propose
+it, he runs it.
 
 Public from the first commit — a repo that appears fully formed in one giant commit reads worse than
 one that visibly grew, and the commit history is part of what a reviewer looks at.
@@ -118,22 +102,47 @@ identical. Record the decision and move on.
   of these forms — *"streaming + tools works, use it everywhere"* or *"streaming + tools is broken,
   run the tool loop non-streaming"* — and anything from Part 1 that Harsh decided.
 - Update the status row for task 00 in `tasks/README.md`.
-- Tell Harsh to restart Claude Code so the hooks become active, then propose the commit.
+- Stage the change and write out the commit message for Harsh to run.
 
 ## Acceptance criteria
 
-- [ ] The plan was read and challenged, and Harsh answered
-- [ ] Every prerequisite verified; anything missing is clearly Harsh's to install
-- [ ] `.claude/hooks/*.sh` are executable
-- [ ] `dotnet-ef` installed
-- [ ] Git repository initialised with a first commit
-- [ ] Tool calling verified on the Gemini key, non-streaming and streaming
-- [ ] The streaming decision is recorded in `docs/SESSION-LOG.md`
-- [ ] The spike project is deleted and not committed
-- [ ] The API key exists only in user-secrets or an environment variable — never in a file
+- [x] The plan was read and challenged, and Harsh answered
+- [x] Every prerequisite verified; anything missing is clearly Harsh's to install
+- [x] `dotnet-ef` installed
+- [x] Git repository initialised with a first commit
+- [x] Tool calling verified on the Gemini key, non-streaming and streaming
+- [x] The streaming decision is recorded in `docs/SESSION-LOG.md`
+- [x] The spike project is deleted and not committed
+- [x] The API key exists only in user-secrets or an environment variable — never in a file
 
 ## Out of scope
 
 The solution, any project, any table, any business logic. That is task 01.
 
 ## Notes on completion
+
+**Machine:** .NET 10.0.302, Node v24.16.0, Docker 29.6.1 (daemon confirmed running), git 2.50.1,
+`dotnet-ef` 10.0.8 — all present, nothing installed. Repo already initialised, on `development`.
+
+**Provider spike:** built a throwaway `OpenAI` 2.13.0 console app in the scratchpad, outside the repo.
+`gemini-2.5-flash` — the model this project's docs originally assumed — turned out to be retired for
+new API keys (`404`, Google's own error names `gemini-3.6-flash` as the replacement). Re-ran against
+`gemini-3.6-flash`:
+
+- Non-streaming tool calls: **works end to end**, tool called correctly, final answer correct.
+- Streaming tool calls: **broken**, and not fixable here — Gemini's 3.x thinking models require a
+  `thought_signature` on replayed function-call parts, a field the standard OpenAI wire schema has no
+  slot for. Confirmed with a raw `curl` reproduction independent of the .NET SDK, so this is a real
+  protocol gap, not a bug in this codebase.
+
+**Decision:** the tool-calling loop runs non-streaming everywhere; only the closing narration streams.
+This was the fallback `docs/SPEC.md` §4 already planned for, so no architecture changed — the UI is
+unaffected because the trace panel runs on server-emitted `AgentEvent`s, not model tokens. Full
+reasoning and the pinned model id are recorded in `docs/SPEC.md` §4.
+
+**What was left out:** did not attempt to work around the streaming limitation (e.g. a client-side
+`thought_signature` shim) — out of scope for a spike, and the fallback costs nothing in the UI.
+
+**What the next task should know:** `QuoteDesk.Agents` tool-calling code should target
+`ChatClient.CompleteChatAsync`, not the streaming variant, for any call that may invoke a tool. The
+model id to configure is `gemini-3.6-flash`.

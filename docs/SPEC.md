@@ -3,6 +3,9 @@
 The contract. When the code and this document disagree, one of them is wrong — fix it deliberately,
 in the same commit. Task-level detail lives in `tasks/`; this file is the shape of the whole thing.
 
+It covers what is being built now. Deployment mechanics live in task 09, channels in task 10,
+telemetry and evals in task 11 — written when those tasks are reached, not three weeks early.
+
 ## 1. What it is
 
 A customer sends a messy enquiry — by paste, email or WhatsApp — to a distributor of textile
@@ -37,23 +40,10 @@ is the entire problem.
 Microsoft Agent Framework Workflows exist for exactly this shape — a deterministic graph with
 autonomous nodes — so the framework and the architecture fit each other.
 
-## 3. Why it is built this way
-
-| Property | What it demonstrates |
-|---|---|
-| Typed tools over EF Core, never raw SQL from the model | Judgment about blast radius |
-| Every rupee computed in C#, explained by the model | You know where LLMs must not be trusted |
-| Workflow suspends for human approval before any write | Agents ≠ autonomy |
-| One channel-agnostic intake shape, three adapters | You design for change without over-building |
-| Streamed agent trace in the UI | You understand latency UX and debuggability |
-| OpenTelemetry span per stage and per tool call | You have operated software, not just written it |
-| Golden-set evals in CI, including prompt injection | Almost nobody's portfolio has this |
-| Provider-swappable LLM behind one interface | Vendor risk, and it runs free |
-
 Deliberately absent: **no vector database.** The data is structured; embeddings would be the wrong
 tool. Say that out loud — it is a better answer than having used one.
 
-## 4. Stack
+## 3. Stack
 
 | Layer | Choice |
 |---|---|
@@ -74,7 +64,7 @@ As of Aug 2026 `Microsoft.Agents.AI` was at 1.19.0 and `Microsoft.Agents.AI.Open
 not hardcode versions from this document** — run `dotnet add package`, take what NuGet resolves, and
 record the resolved versions back here.
 
-## 5. LLM provider — free, and swappable
+## 4. LLM provider — free, and swappable
 
 Both providers speak the OpenAI wire protocol, so the difference is one endpoint:
 
@@ -87,25 +77,40 @@ AIAgent agent = chat.AsAIAgent(instructions: ..., name: ...);
 
 | Profile | Endpoint | Notes |
 |---|---|---|
-| **`gemini` (default)** | `https://generativelanguage.googleapis.com/v1beta/openai/` | ~1000+ requests/day free. Enough for a public demo and for repeated eval runs, and it reads images, so one key covers every channel. Its OpenAI-compatibility layer has known quirks with tool calls **combined with streaming** — task 00 settles this before anything depends on it. |
-| `github` (fallback) | `https://models.github.ai/inference` | Free with a GitHub PAT scoped `models:read`. Real OpenAI models, so tool calling behaves exactly as documented — useful as a control if Gemini misbehaves. But ~50 requests/day and an ~8K input cap, so it cannot carry the demo or the evals, and a photo will not fit. |
+| **`gemini` (default)** | `https://generativelanguage.googleapis.com/v1beta/openai/` | ~1000+ requests/day free. Enough for a public demo and repeated eval runs, and it reads images, so one key covers every channel. **Tool calls work non-streaming; streaming is broken by a provider-side limitation — see below.** |
+| `github` (fallback) | `https://models.github.ai/inference` | Free with a GitHub PAT scoped `models:read`. Real OpenAI models, so tool calling behaves exactly as documented — useful as a control. But ~50 requests/day and an ~8K input cap, so it cannot carry the demo or the evals. |
 
-**Why Gemini is the default:** the eval suite runs 15–20 cases per pass, which would consume a third
-of GitHub Models' daily quota in a single run, and a public demo that dies after ten clicks is worse
-than no demo.
+**Pinned model: `gemini-3.6-flash`.** `gemini-2.5-flash` — the id this document originally assumed —
+returns `404` for new keys ("no longer available to new users"); Google's own error names
+`gemini-3.6-flash` as the replacement. Never use `gemini-flash-latest` or any other alias: it moves
+under you and breaks eval reproducibility.
 
-**If streaming plus tool calls proves broken on the compatibility layer**, it is not a blocker. The
-live trace is driven by server-emitted `AgentEvent`s — `stage`, `tool_start`, `tool_end` — not by
-model tokens; only the final narration uses `token` events. Run the tool loop non-streaming and
-stream just the narration. The UI is unchanged. Task 00 decides this in twenty minutes.
+**Verified 2026-08-29 — task 00 spike, against `gemini-3.6-flash`:**
+
+- **Non-streaming tool calls: works end to end.** `CompleteChatAsync` calls the tool, the follow-up
+  request with the tool result gets a correct final answer.
+- **Streaming tool calls: broken, provider-side, not fixable in our code.** The tool call itself
+  surfaces correctly over `CompleteChatStreamingAsync`. Submitting the result on the *next* streaming
+  turn fails with `400 INVALID_ARGUMENT`: *"Function call is missing a `thought_signature` in
+  functionCall parts... required for tools to work correctly."* Gemini's 3.x "thinking" models attach
+  a `thought_signature` to every function-call part and require it echoed back; that field has no
+  home in the standard OpenAI wire schema, so the `OpenAI` .NET SDK's `ChatToolCall` cannot carry it.
+  This is a real protocol gap between Gemini's thinking models and OpenAI-compatibility clients, not
+  a bug in this codebase — confirmed by reproducing the same request with raw `curl`.
+
+**Decision: run the tool-calling loop non-streaming everywhere, stream only the closing narration.**
+This was the fallback this document already planned for. The live trace panel is driven by
+server-emitted `AgentEvent`s — `stage`, `tool_start`, `tool_end` — not by model tokens, so the UI is
+unaffected. Only `token` events, used for the final human-readable sentence, need real streaming, and
+that call carries no tool calls to replay, so it is unaffected by this issue.
 
 **Rate-limit behaviour is a feature.** On a 429 the API returns `provider_rate_limited` and the UI
 offers to replay one of three recorded runs stored as JSON. A recruiter clicking the live demo must
 never see a blank error.
 
-## 6. Intake
+## 5. Intake
 
-One shape, three adapters, built in risk order (tasks 04 and 09):
+One shape, three adapters, built in risk order (tasks 04 and 10):
 
 ```csharp
 IncomingEnquiry { Channel, SenderId, Body, ReceivedAt, Attachments[] }
@@ -119,17 +124,16 @@ Nothing downstream knows where an enquiry came from. `EnquiryChannel` never appe
 | **Paste** | UI textarea → `POST /api/enquiries` | none — this is what a recruiter uses, never break it |
 | **Email** | MailKit IMAP poller in a `BackgroundService` | low — needs a mailbox and an app password |
 | **WhatsApp** | Twilio sandbox webhook, signature verified | low — join by texting a code, no verification wait |
-| WhatsApp (Meta Cloud API) | optional, **not on the critical path** | high — business verification takes days and can fail |
 
-Never use `whatsapp-web.js` or similar. Against WhatsApp's terms, and it gets numbers banned.
+Never use `whatsapp-web.js` or similar. Against WhatsApp's terms, and it gets numbers banned. Meta's
+Cloud API is explicitly **not** on the critical path — business verification takes days and can fail.
 
 **Attachments.** Images may be read directly by a multimodal model on the default `gemini` profile —
-no OCR service, no second provider. Audio is **not** processed: the voice note is stored, playable in the UI, and the enquiry is
-marked `needs_manual_entry` for a human to type. Chat endpoints do not take audio on our code path,
-free transcription is weak, and code-mixed Gujarati-Hindi-English is unreliable. This is graceful
+no OCR service, no second provider. Audio is **not** processed: the voice note is stored, playable in
+the UI, and the enquiry is marked `needs_manual_entry` for a human to type. This is graceful
 degradation, and it is honest future work in the README.
 
-## 7. Data model
+## 6. Data model
 
 EF Core, SQL Server, migrations generated by the CLI, seeded deterministically from a fixed random
 seed so evals are reproducible.
@@ -152,7 +156,7 @@ model** — enforced by a reflection test over tool result types, not by convent
 Money columns are `decimal(18,2)`, configured explicitly. Read queries use `AsNoTracking()`. No entity
 type appears in a signature outside `QuoteDesk.Data`.
 
-## 8. Tools
+## 7. Tools
 
 | Tool | Signature | Write? |
 |---|---|---|
@@ -171,7 +175,7 @@ makes the demo feel intelligent. `price_quote` calls `QuoteDesk.Domain` and noth
 Read and write registries are separate objects; the Resolve agent is constructed with the read
 registry only.
 
-## 9. API
+## 8. API
 
 ```
 POST /api/enquiries                  -> { enquiryId }
@@ -197,32 +201,16 @@ type AgentEvent =
   | { type: 'error';      code: 'provider_rate_limited'|'budget_exceeded'|'internal'; message: string }
 ```
 
-## 10. Non-goals — refuse these
+## 9. Non-goals — refuse these
 
 Multi-tenancy · user registration · vector DB · real email or WhatsApp *sending* (render the PDF, log
 the send) · audio transcription · mobile layouts beyond "doesn't break" · admin panel · i18n ·
 WebSockets · microservices · more than two agent nodes · any second business domain.
 
-## 11. Deployment — Azure at effectively zero
+## 10. Scope
 
-| Piece | Service | Free basis |
-|---|---|---|
-| API | Container Apps, **min replicas 0** | 180k vCPU-s, 360k GiB-s, 2M requests free per subscription per month; nothing charged while scaled to zero |
-| DB | Azure SQL **free offer** | 100k vCore-seconds + 32 GB, permanent, auto-pauses when exhausted — choose **auto-pause**, not pay-overage, which cannot be reversed |
-| Frontend | Static Web Apps Free | free tier |
-| Telemetry | Application Insights | free allowance; set a daily cap |
-| Images | GitHub Container Registry | free for public |
-| LLM | Google Gemini | free tier, no card |
-
-Scale-to-zero means the first request after idle is slow. Put the measured number in the README —
-"why is it slow the first time" is a question you want to be asked.
-
-Set a ₹0 budget alert regardless. Free tiers change.
-
-## 12. Honest scope
-
-Three sessions. Task 00 is a twenty-minute spike; tasks 01–03 produce provably correct pricing with no LLM involved. Tasks 04–08
-produce the working product. Tasks 09–11 are channels, telemetry, evals, deploy and the README — the
-least enjoyable part, and precisely what separates this from every other portfolio repo.
+Tasks 00–03 produce provably correct pricing with no LLM involved. Tasks 04–08 produce the working
+product. **Task 09 deploys it** — from that point a live URL exists and every later task improves
+something already running. Tasks 10–11 add channels, telemetry, evals and the README.
 
 Do not remove the old project from the resume until this one is deployed, green, and documented.

@@ -98,3 +98,95 @@ Set the Gemini key via `dotnet user-secrets` once the spike project exists.
 
 **Next:** Finish task 00 — parts 4 and 5. The spike settles the one genuine unknown (tool calling on
 Gemini, streaming and not) before anything depends on it.
+
+## 2026-08-29 — Setup simplification (no task number)
+
+**Done:** Cut the Claude Code configuration from 19 files to 4 and the instruction docs from ~1,600
+lines to ~700. All hooks removed at Harsh's instruction — the two guard hooks were inert anyway
+(no `jq`), and `settings.json`'s `deny` list enforces the same protections through the harness,
+which cannot fail open. `.claude/rules/` deleted entirely; its content merged into `CLAUDE.md`,
+which is now the single always-loaded instruction file. `dotnet-reviewer` and `spec-auditor`
+removed in favour of the built-in `/code-review`. `/verify-all` and `/adr` removed — the three
+verification commands are written into `CLAUDE.md` and the task skill directly. `SETUP.md` deleted
+(it claimed "hooks are law", which was false).
+
+**Deploy moved from task 11 to task 09.** Channels became 10; observability, evals and the README
+became 11. `SPEC.md` trimmed to what sessions 1–2 actually build.
+
+**Files that matter:** `CLAUDE.md` (everything always-loaded now lives here), `tasks/README.md`
+(new order and the reasoning), `tasks/task-09-deploy.md` (new).
+
+**Decisions made:** Ship the paste path to a public URL as soon as it works, before channels,
+telemetry or evals. The previous project (WebLibrary) was never finished, so momentum risk outranks
+completeness. Process and scaffolding count as scope and were cut on the same grounds.
+
+**Known gaps:** No `.cs` file exists yet. Docker daemon not running. The Gemini key is set nowhere.
+Task 00 parts 4 and 5 are untouched — no spike has run, so the streaming verdict is still unknown.
+`jq` is no longer needed by anything.
+
+**Blocked on Harsh:** Start Docker Desktop. Have the Gemini API key ready for `dotnet user-secrets`
+once the spike project exists. Decide whether local commit `57b55e3` stays or is undone.
+
+**Next:** Task 00, parts 4 and 5 — the provider spike. It settles the one genuine unknown (tool
+calling on Gemini, streaming and not) before anything depends on it.
+
+## 2026-08-29 — Task 00, parts 1–3 (still `in progress`)
+
+**Done:** Machine verified green — .NET SDK 10.0.302, Node v24.16.0, Docker 29.6.1 with the daemon
+**running** (it was down last session), git 2.50.1, `dotnet-ef` 10.0.8 already installed. Nothing is
+missing; no installs are outstanding.
+
+Gemini key validated against `https://generativelanguage.googleapis.com/v1beta/openai/` — HTTP 200
+on `GET /models`. The account reaches far more than the spec assumed: `gemini-2.5-flash`/`-pro`,
+`gemini-3.5-flash`, `gemini-3.6-flash`, `gemini-3.1-pro`. Recorded in SPEC.md §4, along with the rule
+to pin an exact model id rather than the `gemini-flash-latest` alias, which would break eval
+reproducibility.
+
+Spike project scaffolded at `<scratchpad>/spike` — .NET 10 console, `OpenAI` **2.13.0**. Outside the
+repo, so it cannot be committed by accident. `Program.cs` is not written yet.
+
+**Files that matter:** `docs/SPEC.md` §4 (verified provider findings), `tasks/task-00-environment.md`
+(parts 4–5 remain), `CLAUDE.md`.
+
+**Decisions made:** API signatures are verified by grepping the installed package's XML docs under
+`~/.nuget/packages/`, not by spawning the `api-researcher` subagent — the docs are exact for the
+resolved version and cost one command. The subagent is now reserved for behavioural questions
+(can a workflow resume after a process restart, preview status, provider quirks), expected once in
+the whole project. `CLAUDE.md` and the task skill were updated to say so.
+
+**Known gaps:** **The provider spike has not run.** The streaming-plus-tool-calls verdict is still
+unknown — the one genuine unknown in the project. No model id chosen yet. No `.cs` file in the repo.
+
+**Blocked on Harsh:** Nothing. The key works and the machine is ready.
+
+**Next:** Task 00 parts 4 and 5 — write the spike `Program.cs`, run it non-streaming and streaming,
+record the verdict, delete the spike. Roughly twenty minutes, and task 01 should not start before it.
+
+**Note:** the API key was pasted into the chat transcript. Rotate it in Google AI Studio once the
+demo is finished.
+
+## 2026-08-29 — Task 00 done
+
+**Done:** Environment fully verified (.NET 10.0.302, Node 24.16, Docker 29.6.1 daemon up, git,
+`dotnet-ef`). Provider spike ran and answered the one real unknown: on the Gemini OpenAI-compat
+layer, non-streaming tool calls work end to end; streaming tool calls fail with `400` because
+Gemini's 3.x thinking models require a `thought_signature` on replayed function-call parts that the
+OpenAI wire schema has no field for — confirmed with a raw curl repro, so it's a real protocol gap,
+not our bug. Task 00 is `done`.
+
+**Files that matter:** `docs/SPEC.md` §4 (pinned model, full verdict and reasoning),
+`tasks/task-00-environment.md` (Notes on completion).
+
+**Decisions made:** Pin `gemini-3.6-flash` — `gemini-2.5-flash` (the id SPEC.md originally assumed)
+is `404` for new keys, retired by Google. Tool-calling loop in `QuoteDesk.Agents` runs non-streaming
+everywhere; only the closing narration streams. No architecture change — the trace panel already
+runs on server-emitted `AgentEvent`s, not model tokens, so this was the fallback SPEC.md already
+planned for.
+
+**Known gaps:** No `.cs` file exists yet — task 01 is the first real code. Spike deleted, nothing
+left in the scratchpad.
+
+**Blocked on Harsh:** Nothing.
+
+**Next:** Task 01 — setup and skeleton. Build the solution and the six projects per `CLAUDE.md`'s
+layout, wired `Api → Agents → Data → Domain`, `Intake → Api`, before any real logic.

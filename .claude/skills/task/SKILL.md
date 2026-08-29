@@ -17,39 +17,50 @@ Read the task file in full, plus the parts of `docs/SPEC.md` and `docs/DOMAIN.md
 the existing code you are about to extend. Do not assume the code matches the spec — check.
 
 **If anything in the task looks wrong** — a bad approach, a missing prerequisite, an acceptance
-criterion that cannot be met as written — say so now, before writing code. The task files are my best
-guess, not gospel.
+criterion that cannot be met as written, or scope the demo does not need — say so now, before writing
+code. The task files are a best guess, not gospel.
 
-## 2. Plan, and show me
+## 2. Say what you are about to do, briefly
 
-State which files you will create or change, which types you will add, and which tests will prove it
-works. If this touches `QuoteDesk.Domain` or `QuoteDesk.Agents`, wait for my go-ahead. If it uses a
-Microsoft Agent Framework API, confirm it with `api-researcher` first and show me the source.
+Which files you will create or change, which types you will add, which tests will prove it works.
+A short paragraph, not a document. If this touches `QuoteDesk.Domain` or `QuoteDesk.Agents`, wait for
+a go-ahead. If it uses a Microsoft Agent Framework API, confirm the signature against the
+installed package's XML docs first; the `api-researcher` subagent is a last resort.
 
 ## 3. Build in dependency order
 
 Domain → Data → Agents → Intake → Api → Web. Each layer compiles before the next. Tests for a layer
 are written as you finish it, not saved up for the end.
 
-## 4. Prove it — you run this, not me
+**You do the building.** Harsh is learning this stack by reading the result, so implement it rather
+than handing back instructions. Ask him to run something only when it genuinely needs him — an
+interactive login, a portal click, a credential, a payment.
 
-**Invoke `/verify-all` yourself.** Do not ask me to run it and do not report a task done without it.
-Everything must be green. Never weaken a test to get past a failure.
+## 4. Prove it — you run this, not Harsh
 
-If it comes back red, tell me what failed before you start fixing.
+```bash
+dotnet build QuoteDesk.sln -warnaserror
+dotnet test --filter "FullyQualifiedName!~Evals"
+cd src/QuoteDesk.Web && npm run build
+```
 
-## 5. Close the loop — also you, automatically
+All green, every time, before reporting anything done. Never weaken a test to get past a failure.
+If something fails, say what failed before you start fixing it.
+
+## 5. Close the loop — also yours, automatically
 
 - Tick only the acceptance criteria that are genuinely true
 - Write the **Notes on completion** section at the bottom of the task file: what was built, what you
   left out, what surprised you, what the next task should know
 - Update the status row in `tasks/README.md`
-- **Invoke `/session-log` yourself.** Every task, every session end. I should never have to ask.
-- Hand the diff to `dotnet-reviewer` and summarise what it says
-- Stage the change and propose a conventional-commit message. Do not commit until I say so.
+- **Invoke `/session-log` yourself.** Every task, every session end.
+- Stage the change with `git add`, confirm nothing secret is staged, and **write out the
+  conventional-commit message for Harsh to run.** Never run `git commit` or `git push` yourself.
 
-The only things I type are `/task NN` and `/clear`, plus plan mode. Everything else in this procedure
-is yours to run.
+## 6. Explain what you built
+
+A short walkthrough of the interesting parts — especially anything touching Microsoft Agent
+Framework, React, Docker, CI/CD or hosting. This is the point of the project as much as the code is.
 
 ## Then stop
 

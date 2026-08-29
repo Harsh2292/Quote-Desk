@@ -44,5 +44,5 @@ everything with consequences is code.
 
 ## Development
 
-`SETUP.md` explains how this repo is configured for Claude Code. `docs/SPEC.md` is the contract.
+`CLAUDE.md` holds the rules this repo is built under. `docs/SPEC.md` is the contract.
 `tasks/` is the work queue — open the folder in VS Code, run `claude`, and type `/task 00`.

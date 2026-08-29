@@ -1,4 +1,4 @@
-# Task 09 — Email and WhatsApp channels
+# Task 10 — Email and WhatsApp channels
 
 **Session 3 · depends on: 04**
 

@@ -17,37 +17,34 @@
       "Bash(dotnet restore:*)",
       "Bash(dotnet format:*)",
       "Bash(dotnet user-secrets:*)",
+      "Bash(dotnet tool:*)",
+      "Bash(dotnet ef:*)",
       "Bash(npm run:*)",
       "Bash(npm ci:*)",
       "Bash(npm install:*)",
       "Bash(npx prettier:*)",
       "Bash(npx eslint:*)",
+      "Bash(docker:*)",
       "Bash(docker compose:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)",
+      "Bash(git rm:*)",
       "Bash(git switch:*)",
       "Bash(git checkout:*)",
       "Bash(git branch:*)",
-      "Bash(chmod:*)",
       "Bash(git init:*)",
       "Bash(git remote:*)",
-      "Bash(dotnet tool:*)",
-      "Bash(dotnet ef:*)",
       "Bash(which:*)",
-      "Bash(node:*)",
-      "Bash(docker:*)",
-      "Bash(jq:*)"
+      "Bash(node:*)"
     ],
     "ask": [
+      "Bash(git commit:*)",
       "Bash(git push:*)",
       "Bash(az:*)",
       "Bash(gh:*)",
       "Bash(winget:*)",
-      "Bash(brew:*)",
-      "Bash(apt:*)",
       "Bash(sudo:*)"
     ],
     "deny": [
@@ -60,56 +57,6 @@
       "Read(./secrets/**)",
       "Read(./**/appsettings.Development.json)",
       "Read(./**/appsettings.Local.json)"
-    ]
-  },
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/session-start.sh",
-            "timeout": 20
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-paths.sh",
-            "statusMessage": "Checking write target...",
-            "timeout": 15
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-bash.sh",
-            "statusMessage": "Checking command safety...",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/format.sh",
-            "async": true,
-            "timeout": 90
-          }
-        ]
-      }
     ]
   }
 }
