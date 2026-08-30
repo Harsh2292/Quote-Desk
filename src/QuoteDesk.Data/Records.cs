@@ -142,3 +142,21 @@ public sealed record QuoteRecord(
     DateTimeOffset? ApprovedAt,
     DateTimeOffset? SentAt,
     IReadOnlyList<QuoteLineRecord> Lines);
+
+/// <summary>One pipeline run of one enquiry through Extract → Resolve → Price → Approve.</summary>
+public sealed record AgentRunRecord(
+    int Id,
+    int EnquiryId,
+    string SessionId,
+    string Status,
+    string? ApprovalRequestJson,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+/// <summary>Everything needed to start tracking a new pipeline run.</summary>
+public sealed record NewAgentRun(int EnquiryId, string SessionId, string Status, DateTimeOffset CreatedAt);
+
+/// <summary>One committed workflow checkpoint's identity, without its payload — enough to let
+/// QuoteDesk.Agents' bridge onto <c>ICheckpointStore&lt;JsonElement&gt;</c> pick the latest checkpoint
+/// without paying to load every payload in a session's history.</summary>
+public sealed record CheckpointRecord(string CheckpointId, string? ParentCheckpointId, DateTimeOffset CreatedAt);

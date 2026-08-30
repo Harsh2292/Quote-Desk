@@ -110,4 +110,12 @@ internal sealed class FakeQuoteRepository : IQuoteRepository
         _quotes[index] = updated;
         return Task.FromResult(updated);
     }
+
+    public Task<QuoteRecord> MarkApprovedAsync(int quoteId, int approvedByUserId, string status, DateTimeOffset approvedAt, CancellationToken cancellationToken)
+    {
+        var index = _quotes.FindIndex(q => q.Id == quoteId);
+        var updated = _quotes[index] with { Status = status, ApprovedByUserId = approvedByUserId, ApprovedAt = approvedAt };
+        _quotes[index] = updated;
+        return Task.FromResult(updated);
+    }
 }

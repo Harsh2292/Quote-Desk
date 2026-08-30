@@ -14,6 +14,8 @@ public class QuoteDeskDbContext(DbContextOptions<QuoteDeskDbContext> options) : 
     public DbSet<Quote> Quotes => Set<Quote>();
     public DbSet<QuoteLine> QuoteLines => Set<QuoteLine>();
     public DbSet<AppUser> Users => Set<AppUser>();
+    public DbSet<AgentRun> AgentRuns => Set<AgentRun>();
+    public DbSet<WorkflowCheckpoint> WorkflowCheckpoints => Set<WorkflowCheckpoint>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -328,3 +328,45 @@ passing (94 unit + 30 integration), 0 warnings under `-warnaserror`.
 **Blocked on Harsh:** Nothing.
 
 **Next:** Task 06 — agents and workflow, unchanged from above.
+
+## 2026-08-29 — Task 06: agents and workflow
+
+**Done:** The full pipeline runs — Extract → Resolve → Price → suspend at a real `RequestPort` →
+Approve — behind `EnquiryPipeline.StartAsync`/`ResumeAsync`. Proven against a stubbed `IChatClient`
+scripting the exact docs/DOMAIN.md worked example: real tool calls against the seeded DB resolve the
+bearings and belt, the spindle tape stays unresolved (no guess), Price computes the real 8%/14% in
+plain C# (never a model call), the run suspends with a `pending_approval` `AgentRun` row, and — via a
+second, independent `EnquiryPipeline` sharing only the SQL rows — resuming produces a real `QTN-`
+quote. A token-budget test proves a clean `budget_exceeded` with nothing partially written.
+
+**Files that matter:** `src/QuoteDesk.Agents/Pipeline/` (`EnquiryPipeline`, `QuoteDeskWorkflow`, four
+executors), `src/QuoteDesk.Agents/Checkpointing/SqlCheckpointStore.cs`,
+`tests/QuoteDesk.IntegrationTests/Agents/EnquiryPipelineTests.cs`, `docs/SPEC.md` §3/§4/§6/§7,
+`tasks/task-06-agents-workflow.md` Notes on completion (full API-verification detail).
+
+**Decisions made:** `Microsoft.Agents.AI.OpenAI` deliberately not added (build the agent from
+`IChatClient` instead — keeps stub-based tests clean). `price_quote` withheld from the Resolve agent;
+Price calls `PricingTools` directly. No structured output (`RunAsync<T>`) anywhere — Gemini's
+`json_schema` support is unverified, so every call parses fence-tolerant JSON from plain text
+(`ModelJson`) uniformly. Real workflow suspension via `RequestPort`, wired with plain `AddEdge` calls
+(not `AddExternalCall`, which always loops back to its own source — decompiled and confirmed wrong for
+this shape). Three behavioural questions went to `api-researcher` (auto function-invocation and
+iteration-cap semantics; routing a `RequestPort`'s response to a different node; resume republishing
+the pending request after a restart) — more than the project's usual "once," justified because this
+task's own text calls out checkpointing semantics as something to confirm first.
+
+**Known gaps:** `Program.cs` untouched — `AddQuoteDeskAgentPipeline` exists and is proven by tests but
+nothing in the running Api calls it; task 07 wires the SSE endpoint and decides whether a missing
+`Llm:ApiKey` should fail fast. No live call was made against real `gemini-3.6-flash` — everything is
+proven against a stub, per CLAUDE.md. Found and fixed a real concurrency bug along the way: the
+workflow's background checkpoint-write and the caller's own DB reaction can't share one scoped
+`DbContext` — `WorkflowCheckpointRepository` now uses its own `IDbContextFactory`-sourced context.
+
+**Blocked on Harsh:** One command, whenever convenient (not required for this task's own criteria):
+`dotnet user-secrets set "Llm:ApiKey" "<gemini key>" --project src/QuoteDesk.Api` — needed only for a
+live end-to-end run against the real model, which would settle whether `gemini-3.6-flash` accepts the
+tool-call argument shapes `AIFunctionFactory` expects.
+
+**Next:** Task 07 — API, streaming, auth, logging. Wires `EnquiryPipeline` behind
+`POST /api/enquiries/{id}/process` (SSE) and `POST /api/approvals/{id}`, binds `LlmOptions` in
+`Program.cs`.

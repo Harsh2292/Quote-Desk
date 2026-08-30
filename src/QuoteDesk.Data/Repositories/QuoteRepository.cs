@@ -71,6 +71,19 @@ public sealed class QuoteRepository(QuoteDeskDbContext db) : IQuoteRepository
         return ToRecord(entity);
     }
 
+    public async Task<QuoteRecord> MarkApprovedAsync(int quoteId, int approvedByUserId, string status, DateTimeOffset approvedAt, CancellationToken cancellationToken)
+    {
+        var entity = await db.Quotes.Include(q => q.Lines)
+            .SingleAsync(q => q.Id == quoteId, cancellationToken);
+
+        entity.ApprovedByUserId = approvedByUserId;
+        entity.ApprovedAt = approvedAt;
+        entity.Status = status;
+        await db.SaveChangesAsync(cancellationToken);
+
+        return ToRecord(entity);
+    }
+
     private static QuoteRecord ToRecord(Quote q) => new(
         q.Id,
         q.EnquiryId,

@@ -99,6 +99,20 @@ task 06, when an actual chat client is wired up. Tool names are set via
 `[Experimental("MEAI001")]` in this version and `-warnaserror` treats it as a build error; the
 options-based name is not experimental and produces an identical result.
 
+**Resolved for task 06's agent layer:** `Microsoft.Agents.AI` **1.19.0**, `Microsoft.Agents.AI.Workflows`
+**1.19.0**, `Microsoft.Extensions.AI.OpenAI` **10.7.0** — all added to `QuoteDesk.Agents`.
+**`Microsoft.Agents.AI.OpenAI` was deliberately not added**, despite being named in the original task
+file: its only purpose is `OpenAI.Chat.ChatClient.AsAIAgent()`; building the agent from a plain
+`IChatClient` instead (`chatClient.GetChatClient(model).AsIChatClient()`, then
+`Microsoft.Extensions.AI.ChatClientExtensions.AsAIAgent(IChatClient, ...)`) is what makes the
+stubbed-`IChatClient` integration-test requirement clean, and it also avoids pinning
+`Microsoft.Extensions.AI.OpenAI` back to 10.6.0. Every API used — `ChatClientAgent`'s automatic
+`FunctionInvokingChatClient` wrapping, `MaximumIterationsPerRequest`'s graceful (non-throwing)
+termination, `AgentResponse.Usage`'s cumulative-per-call semantics, `RequestPort` wired with plain
+`AddEdge` calls into an arbitrary downstream node, and a resumed run republishing its pending
+`RequestInfoEvent` — was confirmed by decompiling the installed 1.19.0 assemblies (`ilspycmd`), not
+recalled or guessed; see `tasks/task-06-agents-workflow.md`'s Notes on completion for the full list.
+
 ## 4. LLM provider — free, and swappable
 
 Both providers speak the OpenAI wire protocol, so the difference is one endpoint:
@@ -143,6 +157,26 @@ that call carries no tool calls to replay, so it is unaffected by this issue.
 offers to replay one of three recorded runs stored as JSON. A recruiter clicking the live demo must
 never see a blank error.
 
+**Config, resolved in task 06** (`appsettings.json`'s `Llm` section — key names and non-secret
+defaults only, per CLAUDE.md's Security rules): `Endpoint` (defaults to the Gemini endpoint above),
+`ApiKey` (empty; set locally via `dotnet user-secrets set "Llm:ApiKey" "<key>" --project src/QuoteDesk.Api`),
+`Model` (defaults to `gemini-3.6-flash`), `MaxToolCalls` (8), `TokenBudget` (20000, generous rather than
+tuned against a live model — revisit once real runs give real numbers). Bound into
+`QuoteDesk.Agents.Llm.LlmOptions` and passed to `AddQuoteDeskAgentPipeline`, the same pattern
+`AddQuoteDeskData` uses for its connection string rather than `QuoteDesk.Agents` depending on
+`Microsoft.Extensions.Configuration` itself. **Not yet wired into `QuoteDesk.Api`'s `Program.cs`** —
+task 06 is deliberately out of scope for the HTTP surface (see task file); task 07 does that binding
+and decides whether an empty `Llm:ApiKey` should fail fast the way `Auth:Google:ClientId` already does.
+
+**Structured output — deliberately not used.** `AIAgent.RunAsync<T>()`'s built-in `json_schema`
+response-format mode was confirmed to exist and work mechanically (decompiled), but whether Gemini's
+OpenAI-compatibility endpoint actually honours `response_format: {type: "json_schema"}` for
+`gemini-3.6-flash` specifically is **unverified** — official docs are silent, and the only evidence
+found is an unconfirmed community forum report. Every model call in the pipeline instead asks for
+plain text and parses JSON out of it tolerantly (`QuoteDesk.Agents.Pipeline.ModelJson`, stripping a
+` ```json ` fence if present), uniformly rather than as a caught-failure fallback — cheap insurance,
+and it sidesteps a second unverified provider behaviour after `thought_signature` already cost a day.
+
 ## 5. Intake
 
 One shape, three adapters, built in risk order (tasks 04 and 10):
@@ -185,6 +219,8 @@ Quotes        (Id, EnquiryId, Number, Status, Subtotal, Freight, Tax, Total, Cre
 QuoteLines    (Id, QuoteId, Sku, Qty, UnitPrice, DiscountPct, LineTotal,
                RequiresOverride, DispatchDate, DeliveryDate, Note)                              -- empty
 Users         (Id, GoogleSubject, Email, Name, PictureUrl, Role, CreatedAt, LastLoginAt)       -- empty
+AgentRuns     (Id, EnquiryId, SessionId, Status, ApprovalRequestJson, CreatedAt, UpdatedAt)     -- empty
+WorkflowCheckpoints (Id, SessionId, CheckpointId, ParentCheckpointId, Payload, CreatedAt)       -- empty
 ```
 
 `CostPrice` exists so margin can be checked. **It never leaves the server and never reaches the
@@ -206,6 +242,22 @@ enquiry text; `create_quote_draft` leaves them null until then. `RequiresOverrid
 
 Money columns are `decimal(18,2)`, configured explicitly. Read queries use `AsNoTracking()`. No entity
 type appears in a signature outside `QuoteDesk.Data`.
+
+`AgentRuns` and `WorkflowCheckpoints` were added in task 06's `AddAgentRuns` migration, both tables
+new so the change was free. `AgentRuns` is one row per pipeline run of one enquiry — what
+`GET /api/approvals` (task 07) will list, and how `EnquiryPipeline.ResumeAsync` finds which
+`SessionId` to resume from a bare enquiry id. `WorkflowCheckpoints` is the backing store behind
+`Microsoft.Agents.AI.Workflows`' own `ICheckpointStore<JsonElement>` — `Payload` is the framework's
+serialized state, opaque to `QuoteDesk.Data`, which only stores and retrieves it by session and
+checkpoint id; the bridge onto the framework's interface lives in `QuoteDesk.Agents.Checkpointing
+.SqlCheckpointStore`, keeping every `Microsoft.Agents.AI.Workflows` type out of `QuoteDesk.Data`
+entirely, the same as every other framework-agnostic repository here.
+`WorkflowCheckpointRepository` uses `IDbContextFactory<QuoteDeskDbContext>` rather than the shared
+scoped context every other repository uses: the workflow engine writes a checkpoint from its own
+background execution task, concurrently with whatever the caller driving the run's event stream does
+on the same request's `DbContext` — sharing one instance between those two concurrent paths threw
+EF Core's "a second operation was started on this context" error, found while writing task 06's own
+integration tests.
 
 ## 7. Tools
 
@@ -241,6 +293,13 @@ Read and write registries are separate objects (`ReadToolRegistry`, `WriteToolRe
 `QuoteDesk.Agents.Tools`); the Resolve agent is constructed with the read registry only — enforced by
 a test that constructs `ReadToolRegistry` and asserts neither write tool's name appears in it, not
 just by the two classes being separate.
+
+**Resolved in task 06: the Resolve agent is handed four of `ReadToolRegistry`'s five tools, not all
+five.** `price_quote` is excluded — the Price stage (pure code) calls `PricingTools.PriceQuoteAsync`
+directly instead, so "the model never decides money" (CLAUDE.md rule 1) is structurally true rather
+than a matter of the model choosing not to call a tool it could technically reach. `ReadToolRegistry`
+itself is unchanged (still all five, still tested as such); the filtering happens where the Resolve
+agent's tool list is built (`QuoteDesk.Agents.Pipeline.EnquiryPipeline`).
 
 ## 8. API
 

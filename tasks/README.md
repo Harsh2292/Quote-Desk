@@ -17,7 +17,7 @@ and the status update happen automatically as part of finishing a task.
 | 04a | [Google sign-in and a Users table](task-04a-auth.md) | 2 | done |
 | 04 | [Intake abstraction and paste adapter](task-04-intake.md) | 2 | done |
 | 05 | [Typed tools](task-05-tools.md) | 2 | done |
-| 06 | [Agents and workflow](task-06-agents-workflow.md) | 2 | todo |
+| 06 | [Agents and workflow](task-06-agents-workflow.md) | 2 | done |
 | 07 | [API, streaming, auth, logging](task-07-api.md) | 2 | todo |
 | 08 | [React screens](task-08-web.md) | 2 | todo |
 | 09 | [**Deploy — Docker, CI, live URL**](task-09-deploy.md) | 2 | todo |

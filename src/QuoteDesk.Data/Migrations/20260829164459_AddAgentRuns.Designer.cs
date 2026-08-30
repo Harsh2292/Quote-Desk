@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using QuoteDesk.Data;
 
@@ -11,9 +12,11 @@ using QuoteDesk.Data;
 namespace QuoteDesk.Data.Migrations
 {
     [DbContext(typeof(QuoteDeskDbContext))]
-    partial class QuoteDeskDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260829164459_AddAgentRuns")]
+    partial class AddAgentRuns
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

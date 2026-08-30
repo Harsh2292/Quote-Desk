@@ -12,4 +12,9 @@ public interface IQuoteRepository
     /// <summary>Stamps a quote sent. The caller decides <paramref name="status"/> and whether the
     /// current status permits this — this method performs the write unconditionally.</summary>
     Task<QuoteRecord> MarkSentAsync(int quoteId, string status, DateTimeOffset sentAt, CancellationToken cancellationToken);
+
+    /// <summary>Records which signed-in salesperson approved a quote, and when, and stamps
+    /// <paramref name="status"/> (the caller owns the status vocabulary, same as
+    /// <see cref="MarkSentAsync"/>). Performs the write unconditionally.</summary>
+    Task<QuoteRecord> MarkApprovedAsync(int quoteId, int approvedByUserId, string status, DateTimeOffset approvedAt, CancellationToken cancellationToken);
 }
