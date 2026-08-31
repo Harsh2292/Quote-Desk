@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using QuoteDesk.Data.Repositories;
 
 namespace QuoteDesk.Agents.Pipeline;
@@ -21,7 +22,7 @@ public sealed class ResolveExecutor(
     int maxToolCalls,
     ICatalogRepository catalog,
     ICustomerRepository customers,
-    TokenUsageTracker tokens)
+    ILogger logger)
     : Executor<ExtractionResult, ResolutionResult>(id, options: null, declareCrossRunShareable: false)
 {
     public override async ValueTask<ResolutionResult> HandleAsync(
@@ -42,11 +43,16 @@ public sealed class ResolveExecutor(
 
         var agent = chatClient.AsAIAgent(instructions: instructions, name: "Resolve", description: null, tools: tracedTools);
 
+        // Schema-enforced output is deliberately off for this stage. It is the one stage that calls
+        // tools, and a strict response format applies to every turn of the tool loop — including the
+        // turns where the model must emit a tool call rather than the final JSON. Whether a given
+        // provider handles that combination is unverified here, and getting it wrong breaks tool
+        // calling entirely. Resolve still gets the retry-with-the-error-fed-back layer, which is what
+        // actually stops one malformed reply killing a run.
         var prompt = BuildPrompt(enquiry, extracted);
-        var response = await agent.RunAsync(prompt, session: null, options: null, cancellationToken);
-        tokens.Add(response.Usage?.InputTokenCount, response.Usage?.OutputTokenCount);
+        var modelOutput = await StructuredModelCall.RunAsync<ModelResolutionOutput>(
+            agent, prompt, useSchema: false, logger, cancellationToken);
 
-        var modelOutput = ModelJson.Parse<ModelResolutionOutput>(response.Text);
         return await ReconcileAsync(enquiry, extracted, modelOutput, cancellationToken);
     }
 

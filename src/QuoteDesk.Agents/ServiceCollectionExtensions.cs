@@ -1,5 +1,6 @@
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using QuoteDesk.Agents.Checkpointing;
 using QuoteDesk.Agents.Llm;
 using QuoteDesk.Agents.Pipeline;
@@ -32,7 +33,19 @@ public static class ServiceCollectionExtensions
 
         services.AddQuoteDeskAgents();
         services.AddSingleton(llmOptions);
-        services.AddSingleton(_ => ChatClientFactory.Create(llmOptions));
+
+        // One place, one pipeline: every model call in the app — Extract, Resolve's tool loop,
+        // Narrate — goes through this client, so the logging middleware wraps all of them. When a run
+        // fails, the request and response are in the log, not just a database row to reverse-engineer.
+        services.AddSingleton(sp =>
+        {
+            var loggerFactory = sp.GetService<ILoggerFactory>();
+            var chatClient = ChatClientFactory.Create(llmOptions);
+            return loggerFactory is null
+                ? chatClient
+                : new ChatClientBuilder(chatClient).UseLogging(loggerFactory).Build();
+        });
+
         services.AddSingleton<PromptLibrary>();
         services.AddScoped<SqlCheckpointStore>();
         services.AddScoped<EnquiryPipeline>();

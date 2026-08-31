@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging.Abstractions;
 using QuoteDesk.Agents.Checkpointing;
 using QuoteDesk.Agents.Llm;
 using QuoteDesk.Agents.Pipeline;
@@ -22,6 +23,28 @@ public class EnquiryPipelineTests(RepositoryFixture fixture)
 {
     private static readonly DateTimeOffset Now = new(2026, 3, 26, 8, 41, 0, TimeSpan.FromHours(5.5));
     private const int ShreejiEnquiryId = 1;
+
+    /// <summary>A model does not follow a formatting instruction with 100% reliability. Before the
+    /// retry layer existed, one reply of prose instead of JSON killed the entire run — the failure had
+    /// no recovery path at all. Now the parse error is handed back and the run continues.</summary>
+    [Fact]
+    public async Task StartAsync_WhenExtractRepliesWithProseInsteadOfJson_RetriesWithTheErrorAndStillReachesApproval()
+    {
+        var shreeji = await fixture.Customers.FindByEmailDomainAsync("shreejitextiles.com", CancellationToken.None);
+        var turns = WorkedExampleScript.BuildWorkedExampleTurns(shreeji!.Id);
+        turns.Insert(0, WorkedExampleScript.Text("Sure! I'd be happy to help you with that enquiry."));
+
+        var stub = new StubChatClient(turns);
+        var pipeline = BuildPipeline(stub);
+
+        var events = await CollectAsync(pipeline.StartAsync(ShreejiEnquiryId, CancellationToken.None));
+
+        events.Should().NotContain(e => e is ErrorEvent, "an unparseable first reply must be retried, not fatal");
+        events.Should().ContainSingle(e => e is ApprovalRequiredEvent);
+
+        // The retry is only useful if it tells the model what was actually wrong.
+        stub.ReceivedMessages[1].Last().Text.Should().Contain("could not be used");
+    }
 
     [Fact]
     public async Task StartAsync_ShreejiWorkedExample_SuspendsAtApprovalWithSpindleTapeUnresolved()
@@ -183,7 +206,8 @@ public class EnquiryPipelineTests(RepositoryFixture fixture)
             new PromptLibrary(),
             options,
             checkpointStore,
-            timeProvider);
+            timeProvider,
+            NullLogger<EnquiryPipeline>.Instance);
     }
 
     private static async Task<List<AgentEvent>> CollectAsync(IAsyncEnumerable<AgentEvent> events)

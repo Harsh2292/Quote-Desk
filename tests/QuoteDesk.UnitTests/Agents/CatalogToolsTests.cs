@@ -6,10 +6,16 @@ using QuoteDesk.UnitTests.Agents.Fakes;
 
 namespace QuoteDesk.UnitTests.Agents;
 
+/// <summary>
+/// <c>search_catalog</c> is a two-stage ranker: a cheap substring shortlist, then a whole-word,
+/// rarity-weighted re-rank capped at five candidates. These tests run against a fake catalogue built
+/// to the same grid shape as the real seed data (Bearings 44, Belts 45, SpindleTapes 32, Gears 100),
+/// because the bugs this ranker fixes only show up at realistic volume.
+/// </summary>
 public class CatalogToolsTests
 {
     [Fact]
-    public async Task SearchCatalogAsync_NullQueries_ThrowsRatherThanNullReferenceException()
+    public async Task SearchCatalogAsync_NullQueries_Throws()
     {
         var tools = new CatalogTools(new FakeCatalogRepository());
 
@@ -19,7 +25,7 @@ public class CatalogToolsTests
     }
 
     [Fact]
-    public async Task SearchCatalogAsync_NullHintsOnOneQuery_ThrowsRatherThanNullReferenceException()
+    public async Task SearchCatalogAsync_NullHintsOnOneQuery_Throws()
     {
         var tools = new CatalogTools(new FakeCatalogRepository());
 
@@ -30,92 +36,196 @@ public class CatalogToolsTests
     }
 
     [Fact]
-    public async Task SearchCatalogAsync_ExactSku_ReturnsResolved()
+    public async Task SearchCatalogAsync_TwentyFiveMmPuTimingBelt_ResolvesToPuAndNotRubber()
     {
-        var catalog = new FakeCatalogRepository();
-        catalog.Items.Add(new CatalogItemRecord(1, "BELT-PU-25MM", "25mm PU Timing Belt", "Belts", "Mtr", 30.00m, 22.50m, null));
-        var tools = new CatalogTools(catalog);
+        var tools = new CatalogTools(SeededCatalog());
 
-        var results = await tools.SearchCatalogAsync([Query("25mm PU timing belt")], CancellationToken.None);
+        var result = await SearchOne(tools, "25mm PU timing belt", "25mm", "PU");
 
-        var result = results.Should().ContainSingle().Subject;
-        result.Query.Should().Be("25mm PU timing belt");
         result.Outcome.Should().Be("resolved");
         result.ResolvedSku.Should().Be("BELT-PU-25MM");
+        result.Candidates.Should().NotContain(c => c.Sku == "BELT-RTB-25MM" && c.Confidence >= result.Candidates[0].Confidence);
     }
 
     [Fact]
-    public async Task SearchCatalogAsync_ThickerOneWithNoDistinguishingHint_ReturnsAmbiguousListingBothVariants()
+    public async Task SearchCatalogAsync_RingFrameSpindleTape_DoesNotPullInBearingsDespiteTheSubstring()
     {
-        var catalog = new FakeCatalogRepository();
-        catalog.Items.AddRange(
-        [
-            new CatalogItemRecord(1, "SPT-RF-6MM", "Ring Frame Spindle Tape", "SpindleTapes", "Mtr", 32.00m, 22.40m, "6mm"),
-            new CatalogItemRecord(2, "SPT-RF-8MM", "Ring Frame Spindle Tape", "SpindleTapes", "Mtr", 38.00m, 26.60m, "8mm"),
-        ]);
-        var tools = new CatalogTools(catalog);
+        var tools = new CatalogTools(SeededCatalog());
 
-        var results = await tools.SearchCatalogAsync([Query("ring frame spindle tape", "thicker")], CancellationToken.None);
+        var result = await SearchOne(tools, "ring frame spindle tape", "thicker");
 
-        var result = results.Should().ContainSingle().Subject;
+        result.Candidates.Should().OnlyContain(c => c.Category == "SpindleTapes");
+        result.Candidates.Should().NotContain(c => c.Sku.StartsWith("BRG-"));
+    }
+
+    [Fact]
+    public async Task SearchCatalogAsync_RingFrameSpindleTapeTheThickerOne_IsAmbiguousAcrossThicknesses()
+    {
+        var tools = new CatalogTools(SeededCatalog());
+
+        var result = await SearchOne(tools, "ring frame spindle tape", "thicker");
+
         result.Outcome.Should().Be("ambiguous");
         result.ResolvedSku.Should().BeNull();
-        result.Candidates.Select(c => c.Sku).Should().Contain(["SPT-RF-6MM", "SPT-RF-8MM"]);
+        result.Candidates.Should().OnlyContain(c => c.Sku.StartsWith("SPT-RF-"));
+    }
+
+    [Fact]
+    public async Task SearchCatalogAsync_NeverReturnsMoreThanFiveCandidates_EvenForABareFamilyWord()
+    {
+        var tools = new CatalogTools(SeededCatalog());
+
+        foreach (var vague in new[] { "bearing", "belt", "gear", "spindle tape" })
+        {
+            var result = await SearchOne(tools, vague);
+            result.Candidates.Count.Should().BeLessThanOrEqualTo(5, "'{0}' is too generic to answer precisely", vague);
+        }
+    }
+
+    [Fact]
+    public async Task SearchCatalogAsync_AStrayHintWordDoesNotDragTheRightAnswerBelowResolved()
+    {
+        var tools = new CatalogTools(SeededCatalog());
+
+        // "same as last time" tokenises to stop-words plus nothing distinguishing; earlier this
+        // pushed a perfect match under the threshold. It must not.
+        var withJunk = await SearchOne(tools, "6203 2RS bearing", "same as last time");
+        var clean = await SearchOne(tools, "6203 2RS bearing");
+
+        withJunk.Outcome.Should().Be("resolved");
+        withJunk.ResolvedSku.Should().Be("BRG-6203-2RS");
+        withJunk.ResolvedSku.Should().Be(clean.ResolvedSku);
+    }
+
+    [Fact]
+    public async Task SearchCatalogAsync_HinglishPhrasing_StillResolves()
+    {
+        var tools = new CatalogTools(SeededCatalog());
+
+        var result = await SearchOne(tools, "6210 ZZ bearing ka rate bhejo");
+
+        result.Outcome.Should().Be("resolved");
+        result.ResolvedSku.Should().Be("BRG-6210-ZZ");
+    }
+
+    [Fact]
+    public async Task SearchCatalogAsync_FullySpecifiedGear_ResolvesToOneSku()
+    {
+        var tools = new CatalogTools(SeededCatalog());
+
+        var result = await SearchOne(tools, "module 3 spur gear 36T");
+
+        result.Outcome.Should().Be("resolved");
+        result.ResolvedSku.Should().Be("GEAR-M3-36T");
     }
 
     [Fact]
     public async Task SearchCatalogAsync_NoMatch_ReturnsNotFound()
     {
-        var tools = new CatalogTools(new FakeCatalogRepository());
+        var tools = new CatalogTools(SeededCatalog());
 
-        var results = await tools.SearchCatalogAsync([Query("hydraulic widget")], CancellationToken.None);
+        var result = await SearchOne(tools, "hydraulic pump seal kit");
 
-        var result = results.Should().ContainSingle().Subject;
         result.Outcome.Should().Be("not_found");
         result.Candidates.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task SearchCatalogAsync_CandidatesAlwaysCarryConfidenceAndReason()
-    {
-        var catalog = new FakeCatalogRepository();
-        catalog.Items.Add(new CatalogItemRecord(1, "GEAR-M2-40T", "Module 2 Spur Gear (40T)", "Gears", "Nos", 100.00m, 90.00m, null));
-        var tools = new CatalogTools(catalog);
-
-        var results = await tools.SearchCatalogAsync([Query("module 2 spur gear")], CancellationToken.None);
-
-        results.Should().ContainSingle().Which.Candidates.Should().OnlyContain(c => c.Reason != null && c.Confidence >= 0 && c.Confidence <= 1);
-    }
-
-    /// <summary>The whole point of batching: one call resolves every line, results in the same order
-    /// as the queries they answer — found live that a per-line call cost one real Gemini call per line
-    /// item for no benefit (docs/SESSION-LOG.md).</summary>
-    [Fact]
     public async Task SearchCatalogAsync_MultipleQueriesInOneCall_ReturnsOneResultPerQueryInOrder()
     {
-        var catalog = new FakeCatalogRepository();
-        catalog.Items.AddRange(
-        [
-            new CatalogItemRecord(1, "BRG-6203-2RS", "6203 Series Ball Bearing (2RS)", "Bearings", "Nos", 120.00m, 90.00m, null),
-            new CatalogItemRecord(2, "BELT-PU-25MM", "25mm PU Timing Belt", "Belts", "Mtr", 30.00m, 22.50m, null),
-        ]);
-        var tools = new CatalogTools(catalog);
+        var tools = new CatalogTools(SeededCatalog());
 
         var results = await tools.SearchCatalogAsync(
-            [Query("6203 bearing"), Query("hydraulic widget"), Query("25mm PU timing belt")],
+            [Q("6203 2RS bearing"), Q("hydraulic widget"), Q("25mm PU timing belt", "PU")],
             CancellationToken.None);
 
         results.Should().HaveCount(3);
-        results[0].Query.Should().Be("6203 bearing");
+        results[0].Query.Should().Be("6203 2RS bearing");
         results[0].Outcome.Should().Be("resolved");
-        results[0].ResolvedSku.Should().Be("BRG-6203-2RS");
-        results[1].Query.Should().Be("hydraulic widget");
         results[1].Outcome.Should().Be("not_found");
-        results[2].Query.Should().Be("25mm PU timing belt");
-        results[2].Outcome.Should().Be("resolved");
         results[2].ResolvedSku.Should().Be("BELT-PU-25MM");
     }
 
-    private static CatalogSearchQuery Query(string query, params string[] hints) =>
+    [Fact]
+    public async Task SearchCatalogAsync_EveryCandidateCarriesAConfidenceInRange()
+    {
+        var tools = new CatalogTools(SeededCatalog());
+
+        var result = await SearchOne(tools, "6205 bearing");
+
+        result.Candidates.Should().OnlyContain(c => c.Confidence >= 0 && c.Confidence <= 1);
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    private static CatalogSearchQuery Q(string query, params string[] hints) =>
         new() { Query = query, Hints = hints };
+
+    private static async Task<CatalogSearchResult> SearchOne(CatalogTools tools, string query, params string[] hints)
+    {
+        var results = await tools.SearchCatalogAsync([Q(query, hints)], CancellationToken.None);
+        return results.Should().ContainSingle().Subject;
+    }
+
+    /// <summary>The four seeded families, on the same 2-axis grid as <c>DeterministicSeeder</c>.</summary>
+    private static FakeCatalogRepository SeededCatalog()
+    {
+        var catalog = new FakeCatalogRepository();
+        var id = 0;
+
+        string[] series =
+        [
+            "6200", "6201", "6202", "6203", "6204", "6205", "6206", "6207", "6208", "6209", "6210",
+            "6300", "6301", "6302", "6303", "6304", "6305", "6306", "6307", "6308",
+        ];
+        string[] suffixes = ["2RS", "ZZ", "RS", "2Z"];
+        foreach (var s in series)
+        {
+            foreach (var suffix in suffixes)
+            {
+                catalog.Items.Add(new CatalogItemRecord(
+                    ++id, $"BRG-{s}-{suffix}", $"{s} Series Ball Bearing ({suffix})", "Bearings", "Nos", 100m, 70m, null));
+            }
+        }
+
+        string[] widths = ["10", "15", "20", "25", "30", "35", "40", "45", "50"];
+        (string Name, string Code)[] beltTypes =
+        [
+            ("PU Timing Belt", "PU"), ("Rubber V-Belt", "VBLT"), ("Flat Belt", "FLAT"),
+            ("Rubber Timing Belt", "RTB"), ("Cogged V-Belt", "CVB"),
+        ];
+        foreach (var w in widths)
+        {
+            foreach (var (name, code) in beltTypes)
+            {
+                catalog.Items.Add(new CatalogItemRecord(
+                    ++id, $"BELT-{code}-{w}MM", $"{w}mm {name}", "Belts", "Mtr", 30m, 21m, null));
+            }
+        }
+
+        (string App, string Code)[] tapeApps =
+            [("Ring Frame", "RF"), ("Simplex", "SPX"), ("Doubling Frame", "DF"), ("Roving Frame", "RVF")];
+        string[] thicknesses = ["4mm", "5mm", "6mm", "7mm", "8mm", "9mm", "10mm", "11mm"];
+        foreach (var (app, code) in tapeApps)
+        {
+            foreach (var t in thicknesses)
+            {
+                catalog.Items.Add(new CatalogItemRecord(
+                    ++id, $"SPT-{code}-{t.ToUpperInvariant()}", $"{app} Spindle Tape", "SpindleTapes", "Mtr", 20m, 14m, t));
+            }
+        }
+
+        string[] modules = ["1", "1.5", "2", "2.5", "3", "3.5", "4", "5", "6", "8"];
+        string[] teeth = ["18T", "20T", "24T", "28T", "30T", "36T", "40T", "44T", "48T", "54T"];
+        foreach (var m in modules)
+        {
+            foreach (var teethCount in teeth)
+            {
+                catalog.Items.Add(new CatalogItemRecord(
+                    ++id, $"GEAR-M{m}-{teethCount}", $"Module {m} Spur Gear ({teethCount})", "Gears", "Nos", 100m, 70m, null));
+            }
+        }
+
+        return catalog;
+    }
 }

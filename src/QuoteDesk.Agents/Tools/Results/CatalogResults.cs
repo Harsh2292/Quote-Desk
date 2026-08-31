@@ -1,20 +1,21 @@
 namespace QuoteDesk.Agents.Tools.Results;
 
-/// <summary>One catalogue candidate <c>search_catalog</c> considered, with the confidence and
-/// reasoning behind its score — never picked silently, always explainable.</summary>
+/// <summary>One catalogue candidate <c>search_catalog</c> ranked. Deliberately narrow — just enough
+/// for the model to choose between candidates. Price and unit are not here: the model never prices,
+/// and every field costs tokens that are re-sent on every turn of the tool loop.</summary>
 public sealed record CatalogCandidate
 {
     public required string Sku { get; init; }
     public required string Name { get; init; }
     public required string Category { get; init; }
-    public required string Uom { get; init; }
-    public required decimal ListPrice { get; init; }
+
+    /// <summary>The one distinguishing attribute for near-identical variants (e.g. "6mm" vs "8mm"),
+    /// or null when the item has none.</summary>
     public string? Attributes { get; init; }
 
-    /// <summary>0.0 to 1.0 — how well this candidate matches the search terms.</summary>
+    /// <summary>0.0 to 1.0 — how strongly this candidate matches the search terms, weighted so a
+    /// rare, distinguishing word counts for more than a common family word.</summary>
     public required double Confidence { get; init; }
-
-    public required string Reason { get; init; }
 }
 
 /// <summary>One line item's worth of search input — <c>search_catalog</c> takes an array of these

@@ -12,7 +12,7 @@ namespace QuoteDesk.Agents.Pipeline;
 /// the one model call here only writes the narration sentence, and cannot change a number because it
 /// never sees them as anything but already-computed text to summarize.
 /// </summary>
-public sealed class PriceExecutor(string id, PricingTools pricingTools, AIAgent narrateAgent, TokenUsageTracker tokens)
+public sealed class PriceExecutor(string id, PricingTools pricingTools, AIAgent narrateAgent)
     : Executor<ResolutionResult, ApprovalRequest>(id, options: null, declareCrossRunShareable: false)
 {
     public override async ValueTask<ApprovalRequest> HandleAsync(
@@ -58,9 +58,10 @@ public sealed class PriceExecutor(string id, PricingTools pricingTools, AIAgent 
             Unresolved = resolution.Unresolved,
         });
 
+        // Token usage is counted by BudgetedChatClient, which every stage's agent is built on — not
+        // here, so there is exactly one place the budget is enforced.
         var response = await narrateAgent.RunAsync(
             $"Priced quote and resolution details (JSON):\n{summary}", session: null, options: null, cancellationToken);
-        tokens.Add(response.Usage?.InputTokenCount, response.Usage?.OutputTokenCount);
 
         return response.Text;
     }

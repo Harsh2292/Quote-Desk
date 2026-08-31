@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using QuoteDesk.Agents.Checkpointing;
 using QuoteDesk.Agents.Llm;
 using QuoteDesk.Agents.Prompts;
@@ -33,7 +34,8 @@ public sealed class EnquiryPipeline(
     PromptLibrary prompts,
     LlmOptions options,
     SqlCheckpointStore checkpointStore,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    ILogger<EnquiryPipeline> logger)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -133,17 +135,21 @@ public sealed class EnquiryPipeline(
 
     private WorkflowNodes BuildNodes(TokenUsageTracker tokens)
     {
-        var extractAgent = chatClient.AsAIAgent(instructions: prompts.Extract, name: "Extract", description: null, tools: null);
-        var narrateAgent = chatClient.AsAIAgent(instructions: prompts.Narrate, name: "Narrate", description: null, tools: null);
+        // Every stage talks to the model through this wrapper, so the run's token budget is enforced
+        // per round-trip rather than tallied after each stage has already finished spending.
+        var budgeted = new BudgetedChatClient(chatClient, tokens);
+
+        var extractAgent = budgeted.AsAIAgent(instructions: prompts.Extract, name: "Extract", description: null, tools: null);
+        var narrateAgent = budgeted.AsAIAgent(instructions: prompts.Narrate, name: "Narrate", description: null, tools: null);
 
         // price_quote is deliberately excluded: Resolve gets only the four lookup tools, so pricing
         // is never something the model can call — it is the Price node's job, in plain code.
         var lookupTools = readTools.Tools.Where(t => t.Name != "price_quote").ToList();
 
         return new WorkflowNodes(
-            new ExtractExecutor("Extract", extractAgent, tokens),
-            new ResolveExecutor("Resolve", chatClient, lookupTools, prompts.Resolve, options.MaxToolCalls, catalog, customers, tokens),
-            new PriceExecutor("Price", pricingTools, narrateAgent, tokens),
+            new ExtractExecutor("Extract", extractAgent, options.UseStructuredOutput, logger),
+            new ResolveExecutor("Resolve", budgeted, lookupTools, prompts.Resolve, options.MaxToolCalls, catalog, customers, logger),
+            new PriceExecutor("Price", pricingTools, narrateAgent),
             new ApproveExecutor("Approve", writeTools, quotes, timeProvider));
     }
 
@@ -255,23 +261,48 @@ public sealed class EnquiryPipeline(
         }
     }
 
-    private static ErrorEvent ToErrorEvent(Exception ex) => ex switch
+    private ErrorEvent ToErrorEvent(Exception ex)
     {
-        // Two exception types map to the same provider_rate_limited code because the two providers
-        // this pipeline can be built against (docs/SPEC.md §4) throw different ones for the exact same
-        // condition: ClientResultException from the OpenAI-compatible client ("github" profile, and
-        // "gemini" before Google.GenAI was adopted), Google.GenAI.ClientError from Google's native SDK
-        // ("gemini" profile now). Found live: a real Gemini free-tier daily quota (20 requests/day for
-        // gemini-3.6-flash) threw ClientError, not ClientResultException, and fell through to the
-        // generic "internal" branch below until this was added.
-        ClientResultException { Status: 429 } =>
-            new ErrorEvent { Code = "provider_rate_limited", Message = "The model provider is rate-limiting requests right now." },
-        Google.GenAI.ClientError { StatusCode: 429 } =>
-            new ErrorEvent { Code = "provider_rate_limited", Message = "The model provider is rate-limiting requests right now." },
-        BudgetExceededException budgetEx =>
-            new ErrorEvent { Code = "budget_exceeded", Message = budgetEx.Message },
-        _ => new ErrorEvent { Code = "internal", Message = "The run failed unexpectedly." },
-    };
+        // Log the real exception — type, message, stack — every time, so the next failure is
+        // diagnosable from the server log rather than by reading AgentRuns.TraceJson by hand. The
+        // client only ever sees the shaped ErrorEvent below, never this.
+        logger.LogError(ex, "Enquiry pipeline run failed ({ExceptionType})", ex.GetType().FullName);
+
+        return ex switch
+        {
+            // Two exception types map to the same provider_rate_limited code because the two
+            // providers this pipeline can be built against (docs/SPEC.md §4) throw different ones for
+            // the exact same condition: ClientResultException from the OpenAI-compatible client
+            // ("github" profile, and "gemini" before Google.GenAI was adopted), Google.GenAI.ClientError
+            // from Google's native SDK ("gemini" profile now).
+            ClientResultException { Status: 429 } or Google.GenAI.ClientError { StatusCode: 429 } =>
+                new ErrorEvent { Code = "provider_rate_limited", Message = "The model provider is rate-limiting requests right now." },
+
+            BudgetExceededException budgetEx =>
+                new ErrorEvent { Code = "budget_exceeded", Message = budgetEx.Message },
+
+            // A provider 400/413 whose message mentions tokens or context length is the enquiry
+            // overwhelming the model's input window — the failure mode that took down task 08's first
+            // live run. Report it as budget_exceeded (same "too big to process" family), not a bare
+            // internal error.
+            ClientResultException { Status: 400 or 413 } cre when MentionsContextLimit(cre.Message) =>
+                new ErrorEvent { Code = "budget_exceeded", Message = "The enquiry produced too much context for the model to process." },
+            Google.GenAI.ClientError { StatusCode: 400 } ge when MentionsContextLimit(ge.Message) =>
+                new ErrorEvent { Code = "budget_exceeded", Message = "The enquiry produced too much context for the model to process." },
+
+            OperationCanceledException =>
+                new ErrorEvent { Code = "internal", Message = "The run was cancelled or timed out." },
+
+            _ => new ErrorEvent { Code = "internal", Message = "The run failed unexpectedly." },
+        };
+    }
+
+    private static bool MentionsContextLimit(string? message) =>
+        message is not null
+        && (message.Contains("token", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("context length", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("context window", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("too large", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>What is persisted to <c>AgentRuns.ApprovalRequestJson</c> while a run is suspended —
     /// the <see cref="ApprovalRequest"/> the approval card shows, plus the port's own

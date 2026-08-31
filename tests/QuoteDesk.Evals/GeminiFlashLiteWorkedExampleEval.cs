@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using QuoteDesk.Agents.Checkpointing;
 using QuoteDesk.Agents.Llm;
 using QuoteDesk.Agents.Pipeline;
@@ -95,7 +96,8 @@ public class GeminiFlashLiteWorkedExampleEval
 
         var pipeline = new EnquiryPipeline(
             enquiries, agentRuns, readTools, pricingTools, writeTools, quotes, catalog, customers,
-            chatClient, new PromptLibrary(), llmOptions, checkpointStore, timeProvider);
+            chatClient, new PromptLibrary(), llmOptions, checkpointStore, timeProvider,
+            NullLogger<EnquiryPipeline>.Instance);
 
         var events = new List<AgentEvent>();
         await foreach (var evt in pipeline.StartAsync(enquiryId, CancellationToken.None))

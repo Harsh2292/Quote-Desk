@@ -34,4 +34,16 @@ public sealed class LlmOptions
     /// rather than looping". Generous enough for the worked example's handful of tool calls plus
     /// narration; not tuned against a live model yet.</summary>
     public int TokenBudget { get; init; } = 20_000;
+
+    /// <summary>
+    /// Ask the provider to enforce a JSON schema on the stages that must return structured data,
+    /// instead of asking politely in the prompt and parsing whatever comes back. On by default: it is
+    /// the single biggest reliability lever available, and <see cref="StructuredModelCall"/> falls
+    /// back to plain-text parsing if the provider rejects it.
+    ///
+    /// Whether <c>gemini-3.6-flash</c> honours it is unverified — if a live run logs the
+    /// "provider rejected schema-enforced output" warning, set this to false so the pipeline stops
+    /// paying for the rejected attempt on every run.
+    /// </summary>
+    public bool UseStructuredOutput { get; init; } = true;
 }

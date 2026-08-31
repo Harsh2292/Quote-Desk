@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react'
 import { useAuth } from '../auth/AuthContext'
+import { useDeskSession } from '../desk/DeskSessionContext'
 import { toHash, type Route } from '../routing/useHashRoute'
 import { cn } from '../lib/cn'
 
-const TABS: { label: string; route: Route; matches: Route['name'][] }[] = [
-  { label: 'Desk', route: { name: 'desk', enquiryId: null }, matches: ['desk'] },
-  { label: 'Approvals', route: { name: 'approvals' }, matches: ['approvals'] },
-  { label: 'Quotes', route: { name: 'quotes' }, matches: ['quotes', 'quote'] },
+const TABS: { label: string; matches: Route['name'][] }[] = [
+  { label: 'Desk', matches: ['desk'] },
+  { label: 'Approvals', matches: ['approvals'] },
+  { label: 'Quotes', matches: ['quotes', 'quote'] },
 ]
 
 function initials(name: string): string {
@@ -22,6 +23,14 @@ function initials(name: string): string {
 
 export function AppShell({ active, children }: { active: Route['name']; children: ReactNode }) {
   const { user, signOut } = useAuth()
+  const { activeEnquiryId } = useDeskSession()
+
+  // The Desk tab returns to the run in progress, not a blank desk.
+  const tabRoutes: Record<string, Route> = {
+    Desk: { name: 'desk', enquiryId: activeEnquiryId },
+    Approvals: { name: 'approvals' },
+    Quotes: { name: 'quotes' },
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
@@ -47,7 +56,7 @@ export function AppShell({ active, children }: { active: Route['name']; children
           {TABS.map((tab) => (
             <a
               key={tab.label}
-              href={toHash(tab.route)}
+              href={toHash(tabRoutes[tab.label] ?? { name: 'desk', enquiryId: null })}
               className={cn(
                 'border-b-2 px-2.5 py-[15px] text-[12.5px] font-medium transition-colors',
                 tab.matches.includes(active)
