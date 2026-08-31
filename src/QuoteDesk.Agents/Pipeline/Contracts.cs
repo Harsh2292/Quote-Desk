@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using QuoteDesk.Agents.Tools.Results;
 
 namespace QuoteDesk.Agents.Pipeline;
@@ -24,6 +25,11 @@ public sealed record ExtractedEnquiry
     public required string CompanyName { get; init; }
 
     public string? ShipTo { get; init; }
+
+    /// <summary>Lenient on read (see <see cref="LenientNullableDateOnlyConverter"/>): a model that
+    /// does not follow the ISO-date instruction degrades to null here rather than failing the whole
+    /// Extract stage.</summary>
+    [JsonConverter(typeof(LenientNullableDateOnlyConverter))]
     public DateOnly? RequiredBy { get; init; }
 
     /// <summary>A pricing expectation the customer stated verbatim, e.g. "last time you gave 8% on

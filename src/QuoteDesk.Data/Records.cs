@@ -150,11 +150,27 @@ public sealed record AgentRunRecord(
     string SessionId,
     string Status,
     string? ApprovalRequestJson,
+    string? TraceJson,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
 /// <summary>Everything needed to start tracking a new pipeline run.</summary>
 public sealed record NewAgentRun(int EnquiryId, string SessionId, string Status, DateTimeOffset CreatedAt);
+
+/// <summary>The row shape <c>GET /api/quotes</c> lists — a summary, not the full line detail
+/// <see cref="QuoteRecord"/> carries. <c>CustomerName</c> is joined in from the quote's enquiry
+/// because <see cref="Entities.Quote"/> itself carries no customer id directly (docs/SPEC.md §6:
+/// the customer lives on <c>Enquiries</c>, not <c>Quotes</c>).</summary>
+public sealed record QuoteSummaryRecord(
+    int Id,
+    int EnquiryId,
+    string Number,
+    string Status,
+    int? CustomerId,
+    string? CustomerName,
+    decimal Total,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset ValidUntil);
 
 /// <summary>One committed workflow checkpoint's identity, without its payload — enough to let
 /// QuoteDesk.Agents' bridge onto <c>ICheckpointStore&lt;JsonElement&gt;</c> pick the latest checkpoint

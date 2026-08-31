@@ -7,8 +7,12 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using QuoteDesk.Agents;
+using QuoteDesk.Agents.Llm;
+using QuoteDesk.Api.Approvals;
 using QuoteDesk.Api.Auth;
 using QuoteDesk.Api.Enquiries;
+using QuoteDesk.Api.Logging;
+using QuoteDesk.Api.Quotes;
 using QuoteDesk.Data;
 using QuoteDesk.Data.Seed;
 using QuoteDesk.Intake;
@@ -19,6 +23,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)
     .ReadFrom.Services(services)
+    .Enrich.FromLogContext()
     .WriteTo.Console(formatProvider: CultureInfo.InvariantCulture));
 
 var connectionString = builder.Configuration.GetConnectionString("QuoteDesk")
@@ -26,7 +31,18 @@ var connectionString = builder.Configuration.GetConnectionString("QuoteDesk")
 
 builder.Services.AddQuoteDeskData(connectionString);
 builder.Services.AddQuoteDeskIntake();
-builder.Services.AddQuoteDeskAgents();
+
+// Bound synchronously, before the container is built, the same way the connection string and
+// Auth:* settings above fail fast — a missing key stops the app at boot, not at the first SSE frame.
+var llmOptions = builder.Configuration.GetSection(LlmOptions.SectionName).Get<LlmOptions>()
+    ?? throw new InvalidOperationException($"Missing '{LlmOptions.SectionName}' configuration section.");
+
+if (string.IsNullOrWhiteSpace(llmOptions.ApiKey))
+{
+    throw new InvalidOperationException("Missing Llm:ApiKey. Set it with dotnet user-secrets.");
+}
+
+builder.Services.AddQuoteDeskAgentPipeline(llmOptions);
 
 // Together, these turn every unhandled exception into a generic RFC 9457 ProblemDetails 500 — no
 // stack trace, no exception message, no connection string, per CLAUDE.md's Security rules. This
@@ -110,6 +126,12 @@ if (args.Contains("--seed", StringComparer.Ordinal))
 // First in the pipeline so it wraps every other middleware, including logging and auth.
 app.UseExceptionHandler();
 
+// Before UseSerilogRequestLogging, not after: that middleware logs its "Request finished" summary
+// only once every downstream middleware has returned, so CorrelationMiddleware's LogContext scope
+// has to still be open at that point — placing it any later would let the scope close before the
+// one log line that matters most (the request summary itself) gets a chance to carry the id.
+app.UseMiddleware<CorrelationMiddleware>();
+
 app.UseSerilogRequestLogging();
 
 if (authOptions.AllowedOrigins.Count > 0)
@@ -132,6 +154,8 @@ app.MapHealthChecks("/health/ready").AllowAnonymous();
 
 app.MapAuthEndpoints();
 app.MapEnquiryEndpoints();
+app.MapApprovalEndpoints();
+app.MapQuoteEndpoints();
 
 app.Run();
 

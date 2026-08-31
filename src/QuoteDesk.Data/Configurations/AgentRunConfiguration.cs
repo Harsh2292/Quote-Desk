@@ -13,6 +13,8 @@ public class AgentRunConfiguration : IEntityTypeConfiguration<AgentRun>
         builder.Property(r => r.Status).HasMaxLength(30).IsRequired();
         // No max length: the ApprovalRequest payload has no fixed size bound.
         builder.Property(r => r.ApprovalRequestJson);
+        // No max length: a full run's trace has no fixed size bound either.
+        builder.Property(r => r.TraceJson);
 
         builder.HasIndex(r => r.SessionId).IsUnique();
 

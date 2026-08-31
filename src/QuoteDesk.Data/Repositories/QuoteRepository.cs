@@ -15,6 +15,26 @@ public sealed class QuoteRepository(QuoteDeskDbContext db) : IQuoteRepository
         return quote is null ? null : ToRecord(quote);
     }
 
+    public async Task<IReadOnlyList<QuoteSummaryRecord>> ListAsync(CancellationToken cancellationToken)
+    {
+        var quotes = await db.Quotes.AsNoTracking()
+            .Include(q => q.Enquiry)
+            .ThenInclude(e => e!.Customer)
+            .OrderByDescending(q => q.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        return [.. quotes.Select(q => new QuoteSummaryRecord(
+            q.Id,
+            q.EnquiryId,
+            q.Number,
+            q.Status,
+            q.Enquiry?.CustomerId,
+            q.Enquiry?.Customer?.Name,
+            q.Total,
+            q.CreatedAt,
+            q.ValidUntil))];
+    }
+
     public async Task<QuoteRecord> CreateDraftAsync(NewQuote quote, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(quote);

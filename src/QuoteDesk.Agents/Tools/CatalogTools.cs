@@ -23,23 +23,37 @@ public sealed class CatalogTools(ICatalogRepository catalog)
     };
 
     [Description(
-        "Searches the catalogue for items matching a customer's description. Pass the core item words as " +
+        "Searches the catalogue for items matching customers' descriptions — pass one entry per line item " +
+        "to resolve in a single call, not one call per line. For each entry, give the core item words as " +
         "query and any extra qualifying words (nicknames, sizes, 'the thicker one') as hints — every word " +
-        "helps scoring. Outcome is 'resolved' when one candidate is clearly the best match, 'ambiguous' " +
-        "when several are too close to tell apart (never guess between them — ask the customer, or check " +
-        "get_customer_history for a prior purchase that breaks the tie), or 'not_found' when nothing matches.")]
-    public async Task<CatalogSearchResult> SearchCatalogAsync(
-        [Description("The core search phrase, e.g. '6203 bearing' or 'ring frame spindle tape'.")]
-        string query,
-        [Description("Extra qualifying words from the enquiry, e.g. ['thicker'] or ['25mm']. Pass an empty array if there are none.")]
-        string[] hints,
+        "helps scoring. Returns one result per query, in the same order. Outcome is 'resolved' when one " +
+        "candidate is clearly the best match, 'ambiguous' when several are too close to tell apart (never " +
+        "guess between them — ask the customer, or check get_customer_history for a prior purchase that " +
+        "breaks the tie), or 'not_found' when nothing matches.")]
+    public async Task<IReadOnlyList<CatalogSearchResult>> SearchCatalogAsync(
+        [Description("One entry per line item to resolve, e.g. a 3-line enquiry passes 3 entries here in one call.")]
+        CatalogSearchQuery[] queries,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(query);
-        ArgumentNullException.ThrowIfNull(hints);
+        ArgumentNullException.ThrowIfNull(queries);
 
-        var tokens = BuildTokens(query, hints);
-        var searchTerms = tokens.Append(query.Trim()).Where(t => t.Length >= 2).Distinct(StringComparer.OrdinalIgnoreCase);
+        var results = new List<CatalogSearchResult>(queries.Length);
+        foreach (var query in queries)
+        {
+            results.Add(await SearchOneAsync(query, cancellationToken));
+        }
+
+        return results;
+    }
+
+    private async Task<CatalogSearchResult> SearchOneAsync(CatalogSearchQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(query.Query);
+        ArgumentNullException.ThrowIfNull(query.Hints);
+
+        var tokens = BuildTokens(query.Query, query.Hints);
+        var searchTerms = tokens.Append(query.Query.Trim()).Where(t => t.Length >= 2).Distinct(StringComparer.OrdinalIgnoreCase);
 
         var found = new Dictionary<string, CatalogItemRecord>(StringComparer.OrdinalIgnoreCase);
         foreach (var term in searchTerms)
@@ -52,7 +66,7 @@ public sealed class CatalogTools(ICatalogRepository catalog)
 
         if (found.Count == 0)
         {
-            return new CatalogSearchResult { Outcome = "not_found", Candidates = [], Reason = $"No catalogue item matches '{query}'." };
+            return new CatalogSearchResult { Query = query.Query, Outcome = "not_found", Candidates = [], Reason = $"No catalogue item matches '{query.Query}'." };
         }
 
         var scored = found.Values.Select(item => Score(item, tokens)).OrderByDescending(c => c.Confidence).ToList();
@@ -63,9 +77,10 @@ public sealed class CatalogTools(ICatalogRepository catalog)
             && (runnerUp is null || best.Confidence - runnerUp.Confidence >= AmbiguityMargin);
 
         return isResolved
-            ? new CatalogSearchResult { Outcome = "resolved", ResolvedSku = best.Sku, Candidates = scored, Reason = best.Reason }
+            ? new CatalogSearchResult { Query = query.Query, Outcome = "resolved", ResolvedSku = best.Sku, Candidates = scored, Reason = best.Reason }
             : new CatalogSearchResult
             {
+                Query = query.Query,
                 Outcome = "ambiguous",
                 Candidates = scored,
                 Reason = $"{scored.Count} candidates are too close to choose between automatically — ask which one, or check the customer's order history.",

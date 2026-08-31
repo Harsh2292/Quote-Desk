@@ -9,6 +9,9 @@
     <PackageReference Include="Microsoft.Agents.AI" Version="1.19.0" />
     <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.19.0" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.7.0" />
+    <!-- The "gemini" profile's IChatClient — see ChatClientFactory.cs's remarks for why the OpenAI-
+         compatible endpoint was dropped for this profile specifically. -->
+    <PackageReference Include="Google.GenAI" Version="1.20.0" />
   </ItemGroup>
 
   <ItemGroup>

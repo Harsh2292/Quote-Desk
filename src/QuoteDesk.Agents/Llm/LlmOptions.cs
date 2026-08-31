@@ -12,6 +12,17 @@ public sealed class LlmOptions
 {
     public const string SectionName = "Llm";
 
+    /// <summary>"gemini" (default) or "github" — which branch <c>ChatClientFactory.Create</c> builds.
+    /// Added once adopting <c>Google.GenAI</c> for the "gemini" profile (docs/SPEC.md §4's
+    /// `thought_signature` correction) meant the two profiles could no longer share one
+    /// OpenAI-compatible client differing only by <see cref="Endpoint"/> — Google's native SDK takes
+    /// an API key, not an arbitrary base URL, so the code that builds the client has to know which
+    /// one to build.</summary>
+    public string Provider { get; init; } = "gemini";
+
+    /// <summary>Meaningful only for <see cref="Provider"/> "github" — Google's native SDK
+    /// (<c>Google.GenAI</c>) has no endpoint override, so this is not "any OpenAI-compatible endpoint"
+    /// universally any more, just for that one fallback profile.</summary>
     public required string Endpoint { get; init; }
     public required string ApiKey { get; init; }
     public required string Model { get; init; }

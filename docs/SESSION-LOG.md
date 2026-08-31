@@ -370,3 +370,197 @@ tool-call argument shapes `AIFunctionFactory` expects.
 **Next:** Task 07 — API, streaming, auth, logging. Wires `EnquiryPipeline` behind
 `POST /api/enquiries/{id}/process` (SSE) and `POST /api/approvals/{id}`, binds `LlmOptions` in
 `Program.cs`.
+
+## 2026-08-30 — Task 07: API, streaming, auth, logging
+
+**Done:** `EnquiryPipeline` is reachable over HTTP behind the existing auth policy. `POST
+/api/enquiries/{id}/process` and `POST /api/approvals/{id}` (approve/reject) both stream `AgentEvent`s
+as SSE through one shared writer that also persists the run's full trace. `GET /api/enquiries/{id}`,
+`GET /api/approvals`, `GET /api/quotes`, `GET /api/quotes/{id}` all implemented. Proven end to end
+against the real docs/DOMAIN.md worked example with a scripted `IChatClient`: process suspends at
+approval with the spindle tape unresolved, approving resumes to a real `QTN-` quote, and the trace
+replays after the stream closes. A stubbed 429 proves `provider_rate_limited`. 156/156 tests pass
+(117 unit + 39 integration), 0 warnings under `-warnaserror`, `npm run build` clean.
+
+**Files that matter:** `src/QuoteDesk.Api/Streaming/AgentEventStreamWriter.cs` (the one place SSE
+framing exists), `src/QuoteDesk.Api/Approvals/` and `Quotes/` (new), `src/QuoteDesk.Data/Migrations/
+…AddAgentRunTrace`, `tests/QuoteDesk.IntegrationTests/Api/AgentStreamEndpointTests.cs`.
+
+**Decisions made:** Three scope questions settled with Harsh before coding — rate limiting deferred to
+task 09 (defends a URL that doesn't exist yet), the trace stored as one `AgentRuns.TraceJson` column
+appended by read-merge-rewrite, and approvals support only approve/reject (`edit` returns 400 until
+task 08 defines that payload). Full detail and reasoning in tasks/task-07-api.md's Notes on completion.
+
+**Known gaps:** No pipeline stage emits a `token` SSE event — Price's narration runs non-streaming
+(docs/SPEC.md §8 records this as a real task-06 gap, not fixed here; bigger than task 07's scope).
+Separately, `QuoteWriteTools.CreateQuoteDraftAsync` still hardcodes `ShipTo`/`RequiredBy` to null even
+though `ApprovalRequest` has carried real values since task 06 — found, not touched.
+
+**Live-Gemini finding, significant:** Harsh supplied a real key mid-session; the first-ever live run
+of the real pipeline (`tests/QuoteDesk.Evals/GeminiWorkedExampleEval.cs`, dev DB migrated to catch up
+first — it was 2 migrations behind) surfaced that the `thought_signature` protocol gap docs/SPEC.md
+already documented for *streaming* also breaks the **non-streaming** path: Extract succeeds,
+`resolve_customer` executes and returns a real result, and the very next turn — submitting that result
+back to the model — fails with the same `400 INVALID_ARGUMENT thought_signature` error. Task 00's
+spike verified non-streaming against one hand-rolled round trip, not the real `ChatClientAgent` /
+`FunctionInvokingChatClient` loop `ResolveExecutor` runs. **The whole Resolve stage cannot currently
+complete against real `gemini-3.6-flash`.** docs/SPEC.md §4 now records this correction in full; the
+eval fails on purpose as its regression test. A smaller, already-fixed finding from the same run: the
+model didn't reliably format `requiredBy` as ISO-8601 (`"5th"` on one run, valid on another) — fixed
+via a lenient converter plus a tighter prompt instruction, both in this commit.
+
+**Blocked on Harsh:** The `thought_signature` finding above needs a direction decision, not a guess —
+options include checking whether a newer `Microsoft.Agents.AI`/`Microsoft.Extensions.AI.OpenAI`
+release has addressed it, switching the default profile to `github` (SPEC.md §4: real OpenAI models,
+correct tool-calling, but ~50 req/day and an ~8K input cap — cannot carry the demo), or something else
+entirely. This blocks the Resolve stage working end to end against the pinned model, which blocks a
+real browser demo — everything else in tasks 06–07 is proven correct against a stub and does not
+depend on this being resolved.
+
+**Next:** Resolve the `thought_signature` non-streaming finding above before task 08, or explicitly
+decide to proceed with task 08 (React screens) anyway, since the UI can be built and demoed against
+stub-driven or replayed runs regardless. `src/QuoteDesk.Web/src/api/agentEvents.ts` is ready for
+`useAgentStream` to consume either way.
+
+## 2026-08-30 — Gemini `thought_signature` fix: adopted Google.GenAI
+
+**Done:** The `thought_signature` blocker above is resolved. Harsh asked whether OpenRouter or
+Google's native SDK would fix it; researched both — OpenRouter confirmed no fix (same OpenAI-compat
+shim, same error, per multiple independent GitHub issue reports), Google's official `Google.GenAI`
+.NET SDK confirmed a real fix (`api-researcher`: read the SDK's own source and decompiled this
+project's exact installed `FunctionInvokingChatClient` — the adapter round-trips the signature through
+a standard `TextReasoningContent.ProtectedData` field, which the loop never strips). Spiked first
+(isolated `resolve_customer` call, no pipeline involved) — passed. Adopted for real:
+`ChatClientFactory.Create` now branches on a new `LlmOptions.Provider` (`"gemini"` → `Google.GenAI`,
+`"github"` → unchanged `OpenAIClient`). Confirmed live through the actual `EnquiryPipeline`: Extract
+succeeded, `resolve_customer` **and** `get_customer_history` both completed multi-turn with real tool
+results — the exact call that failed before now works — before a genuine free-tier daily quota (20
+requests/day for `gemini-3.6-flash` on this key) cut the run short. 157/157 non-eval tests still pass.
+
+**Files that matter:** `src/QuoteDesk.Agents/Llm/ChatClientFactory.cs` (the branch + full reasoning),
+`src/QuoteDesk.Agents/Llm/LlmOptions.cs` (`Provider`), `docs/SPEC.md` §4 (full resolution write-up).
+
+**Decisions made:** Spike-then-adopt, not straight to production code — Harsh's call, to avoid
+touching `ChatClientFactory` before knowing it would work. Trade-off accepted knowingly: `Google.GenAI`
+takes an API key, not a base URL, so the `gemini` profile lost the "any OpenAI-compatible endpoint"
+swappability; `github` is unaffected. Found and fixed in the same pass: the two profiles now throw
+different exception types for a rate limit (`ClientResultException` vs `Google.GenAI.ClientError`) —
+the live quota hit proved this was a real gap, not hypothetical, so `EnquiryPipeline.ToErrorEvent` now
+matches both, with a new stub-based regression test.
+
+**Known gaps:** No single completely clean live run (Extract → Resolve → Price → `ApprovalRequiredEvent`)
+has completed yet — the free-tier quota (20 req/day for this model) was exhausted mid-verification.
+The multi-turn tool-calling mechanism itself is confirmed fixed (two real tool calls completed that
+previously failed on the very first one); what's unconfirmed is only the *rest* of the pipeline
+(Price's narration call, the full worked example's ambiguity handling) under the new client, which
+should behave identically since nothing else changed, but hasn't been watched happen end to end yet.
+
+**Blocked on Harsh:** Nothing required, but worth knowing: 20 requests/day is tight for a live public
+demo one Google account away from being useless — worth checking Google AI Studio for a way to raise
+this free-tier quota, or confirming this is expected for `gemini-3.6-flash` specifically, before task 09.
+
+**Next:** Once the daily quota resets, run `dotnet test tests/QuoteDesk.Evals --filter GeminiWorkedExampleEval`
+once more to confirm a fully clean pass, then proceed to task 08 (React screens) — nothing about the
+UI depends on this being re-verified first.
+
+## 2026-08-30 — Phase 0 result: gemini-3.1-flash-lite tested, rejected for quality
+
+**Done:** Ran the real worked example against `gemini-3.1-flash-lite` (a separate free-tier quota
+bucket from `gemini-3.6-flash`'s exhausted 20/day). Quota was not the limiting factor this time — the
+run consumed far more than 20 requests with no quota error at all, confirming per-model buckets are
+real and separate. But it failed on quality: `search_catalog("6203 bearing")` came back with **112
+weakly-scored candidates** (all confidence 0.2, matched only on the token "RING") instead of narrowing
+to the actual bearing, and the model then tried to disambiguate by calling `get_customer_history`
+one SKU at a time across many candidates — a brute-force exploration that burned 153,724 tokens against
+a 20,000 budget before `EnquiryPipeline`'s safety cap correctly stopped the run with `budget_exceeded`.
+Nothing wrong reached anywhere (the safety net worked exactly as designed), but the judgment quality
+was measurably worse than `gemini-3.6-flash`'s clean run on the identical enquiry.
+
+**Decision: stay on `gemini-3.6-flash`.** Per the plan agreed before this test: a demo that reasons
+this poorly is worse than one that occasionally runs out of quota. `tests/QuoteDesk.Evals/GeminiFlashLiteWorkedExampleEval.cs`
+kept in the repo as a real, dated record of this — not deleted — so a future session doesn't re-attempt
+the same switch without re-testing (and re-test is worth doing again later: this was one run, on a
+"Lite" model that may simply need a different, less open-ended prompt to search well, not necessarily
+a permanent verdict on the model itself).
+
+**Next:** Proceed to batching `search_catalog` (already approved, model-independent) — see the current
+plan for the concrete change.
+
+## 2026-08-30 — Batched search_catalog
+
+**Done:** `search_catalog` now resolves every line item in one call instead of one call per line —
+`(CatalogSearchQuery[] queries) -> CatalogSearchResult[]`, one result per query in the same order.
+For docs/DOMAIN.md's worked example this cuts Resolve from 6 real model calls to 4, and the whole
+pipeline from 8 to 6. No change was needed to `ResolveExecutor`, `TracedAIFunction`, or
+`ToolCallBudget` — none of them ever assumed one call resolved one line. 158/158 non-eval tests pass
+(118 unit + 40 integration — one new unit test added for the batch case), `npm run build` clean.
+
+**Files that matter:** `src/QuoteDesk.Agents/Tools/CatalogTools.cs`,
+`src/QuoteDesk.Agents/Tools/Results/CatalogResults.cs` (new `CatalogSearchQuery`, `CatalogSearchResult`
+gained a `Query` echo field), `src/QuoteDesk.Agents/Prompts/resolve.md`, docs/SPEC.md §7.
+
+**Decisions made:** Kept the tool name and read/write registry unchanged — only its signature changed,
+so `ToolRegistryTests`'s fixed name list needed no update. `CatalogSearchResult` gained a `Query` field
+(echoing which input it answers) so the model — and a human reading the trace panel — can map a
+batched call's results back to specific line items without relying on array position alone.
+
+**Known gaps:** None new. This closes out the batching work from the earlier assessment; the narration
+LLM-call-removal option from that same assessment was not picked and remains undone, on purpose.
+
+**Next:** Task 08 — React screens. Nothing about this session's work changes that scope.
+
+## 2026-08-30 — gemini-3.5-flash-lite tested, also rejected for quality
+
+**Done:** Harsh checked Google AI Studio's own rate-limit dashboard directly — real numbers, not blog
+guesses: `gemini-3.6-flash`/`gemini-3.7-flash`/`gemini-3 Flash` all cap at 20/day (matches what we
+already measured), but `gemini-3.5-flash-lite` shows 500/day. Worth testing on quota grounds alone.
+Ran the same rigorous worked-example eval used for `gemini-3.1-flash-lite`. Result: same class of
+failure, different mechanism — the batched `search_catalog` call itself (confirms batching works
+correctly against a real model) came back with a wildly over-broad candidate list (342 SKU mentions
+across the three line items, in a ~300-item catalogue), and the model burned 56,463 tokens against the
+20,000 budget trying to work through it before the safety cap stopped the run.
+
+**Now two different "Lite" models have failed this exact bar, for related but distinct reasons** —
+`3.1-flash-lite` over-explored via many small `get_customer_history` calls, `3.5-flash-lite` got a
+bloated result from one `search_catalog` call. Both point at the same underlying weakness: Lite-tier
+models construct less specific/tighter search queries than `gemini-3.6-flash` does, which this
+project's `CatalogTools` scoring is sensitive to. This is real, repeated signal, not a fluke — staying
+on `gemini-3.6-flash` as primary is the right call until/unless a Lite model gets a properly tuned
+prompt for this specific task (not attempted; out of scope right now).
+
+**Files that matter:** `tests/QuoteDesk.Evals/Gemini35FlashLiteWorkedExampleEval.cs` (new, kept as a
+dated record, same reasoning as the 3.1 variant).
+
+**Next:** Harsh asked about a fallback chain (gemini-3.6-flash primary, drop to a Lite model only once
+quota is truly exhausted) rather than switching the primary outright. Given both Lite candidates now
+have confirmed quality problems, this reframes as "worse but available beats nothing," not "just as
+good and free" — a real design worth doing carefully, not a quick win. Not started; needs its own scoping
+(mid-conversation model switching risk, whether to fall back per-run vs mid-run, how the trace panel
+shows which model actually answered).
+
+## 2026-08-30 — Session close: root cause refined, task 08 is next
+
+**Done:** Traced the `3.5-flash-lite` failure down to real data rather than guessing: the model's
+`search_catalog` query was reasonable ("PU timing belt", hint "25mm"); the 150-candidate flood was
+`CatalogTools.Score` matching every "Rubber Timing Belt" too, because it counts overlapping words
+without weighting the one that actually distinguishes the item (PU vs Rubber). **Corrects the earlier
+entry's framing** ("Lite models construct less specific queries") — the confirmed root cause is our
+own scoring code being too permissive, not the model's query construction. Separately, real: once
+handed a big/ambiguous list, `3.1-flash-lite` chose to brute-force it (many individual
+`get_customer_history` calls) instead of accepting ambiguity like the prompt instructs — that part is
+a genuine model-quality difference, not a code bug.
+
+**Decision:** Task 08 (React screens) starts next session, before any of today's follow-ups
+(`CatalogTools.Score` reweighting, a model-fallback chain). Both are real and worth doing, but
+deliberately parked — UI comes first.
+
+**Known gaps / parked for later:** `CatalogTools.Score` doesn't weight distinguishing words — worth
+fixing regardless of which model is used, and might be enough on its own to make a Lite model viable.
+A model-fallback chain (gemini-3.6-flash primary, Lite as last resort once quota's gone) discussed but
+not designed — needs its own scoping session.
+
+**Everything from today (task 07, the Google.GenAI/thought_signature fix, batched `search_catalog`,
+three eval files) is staged but not committed** — nothing lost, ready whenever Harsh wants the commit
+message.
+
+**Next:** Task 08 — React screens (Desk, Approvals, Quotes), starting fresh next session.

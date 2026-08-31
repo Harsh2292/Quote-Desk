@@ -4,6 +4,10 @@ public interface IQuoteRepository
 {
     Task<QuoteRecord?> GetByIdAsync(int id, CancellationToken cancellationToken);
 
+    /// <summary>Newest first — what <c>GET /api/quotes</c> (task 07) lists. Summary shape, not full
+    /// line detail; joins the customer name in from the quote's enquiry.</summary>
+    Task<IReadOnlyList<QuoteSummaryRecord>> ListAsync(CancellationToken cancellationToken);
+
     /// <summary>Persists a new quote and its lines, then assigns <c>Number</c> from the row's own
     /// generated Id (e.g. "QTN-2026-0004") — a plain default per docs/DOMAIN.md's numbering
     /// convention, not a locked business rule.</summary>

@@ -32,6 +32,14 @@ public sealed class AgentRunRepository(QuoteDeskDbContext db) : IAgentRunReposit
         return entity is null ? null : ToRecord(entity);
     }
 
+    public async Task<AgentRunRecord?> GetByIdAsync(int id, CancellationToken cancellationToken)
+    {
+        var entity = await db.AgentRuns.AsNoTracking()
+            .SingleOrDefaultAsync(r => r.Id == id, cancellationToken);
+
+        return entity is null ? null : ToRecord(entity);
+    }
+
     public async Task<AgentRunRecord?> GetLatestByEnquiryIdAsync(int enquiryId, CancellationToken cancellationToken)
     {
         // Ordered by Id, not CreatedAt: two runs for the same enquiry can share an identical
@@ -72,8 +80,19 @@ public sealed class AgentRunRepository(QuoteDeskDbContext db) : IAgentRunReposit
         return ToRecord(entity);
     }
 
+    public async Task AppendTraceAsync(int id, string traceJson, DateTimeOffset updatedAt, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(traceJson);
+
+        var entity = await db.AgentRuns.SingleAsync(r => r.Id == id, cancellationToken);
+
+        entity.TraceJson = traceJson;
+        entity.UpdatedAt = updatedAt;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     private static AgentRunRecord ToRecord(AgentRun r) => new(
-        r.Id, r.EnquiryId, r.SessionId, r.Status, r.ApprovalRequestJson, r.CreatedAt, r.UpdatedAt);
+        r.Id, r.EnquiryId, r.SessionId, r.Status, r.ApprovalRequestJson, r.TraceJson, r.CreatedAt, r.UpdatedAt);
 }
 
 /// <summary>The status vocabulary <see cref="AgentRun.Status"/> is written from. Lives here, not in

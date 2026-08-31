@@ -257,7 +257,16 @@ public sealed class EnquiryPipeline(
 
     private static ErrorEvent ToErrorEvent(Exception ex) => ex switch
     {
+        // Two exception types map to the same provider_rate_limited code because the two providers
+        // this pipeline can be built against (docs/SPEC.md §4) throw different ones for the exact same
+        // condition: ClientResultException from the OpenAI-compatible client ("github" profile, and
+        // "gemini" before Google.GenAI was adopted), Google.GenAI.ClientError from Google's native SDK
+        // ("gemini" profile now). Found live: a real Gemini free-tier daily quota (20 requests/day for
+        // gemini-3.6-flash) threw ClientError, not ClientResultException, and fell through to the
+        // generic "internal" branch below until this was added.
         ClientResultException { Status: 429 } =>
+            new ErrorEvent { Code = "provider_rate_limited", Message = "The model provider is rate-limiting requests right now." },
+        Google.GenAI.ClientError { StatusCode: 429 } =>
             new ErrorEvent { Code = "provider_rate_limited", Message = "The model provider is rate-limiting requests right now." },
         BudgetExceededException budgetEx =>
             new ErrorEvent { Code = "budget_exceeded", Message = budgetEx.Message },
@@ -267,6 +276,9 @@ public sealed class EnquiryPipeline(
     /// <summary>What is persisted to <c>AgentRuns.ApprovalRequestJson</c> while a run is suspended —
     /// the <see cref="ApprovalRequest"/> the approval card shows, plus the port's own
     /// <see cref="Microsoft.Agents.AI.Workflows.ExternalRequest.RequestId"/>, needed to correlate the
-    /// response the framework republishes on resume.</summary>
-    private sealed record StoredApproval(string RequestId, ApprovalRequest Request);
+    /// response the framework republishes on resume. Public (not private, despite being written only
+    /// from inside this class) because task 07's approval endpoints are the reader of this column and
+    /// need the exact wire shape to deserialize it — better that than reimplementing this record, or
+    /// parsing the JSON by hand, on the other side of the project boundary.</summary>
+    public sealed record StoredApproval(string RequestId, ApprovalRequest Request);
 }

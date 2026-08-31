@@ -20,8 +20,11 @@ Extract exactly these fields:
   at the bottom, or in a signature block). Empty string if none is written.
 - **shipTo** — the delivery destination, if the customer names one (e.g. "our Sachin unit"). Null if
   not stated.
-- **requiredBy** — the date the customer asked for, if any, interpreted as a plain date. Null if not
-  stated. If the customer only gives a day of month with no month, assume the current month.
+- **requiredBy** — the date the customer asked for, if any, as `YYYY-MM-DD` (e.g. `2026-03-05`) —
+  never a day number alone, never a month name, always the full ISO date. Null if not stated, and null
+  rather than a guess if the wording is too vague to resolve to one calendar date. If the customer only
+  gives a day of month with no month, assume the current month; if they give day and month with no
+  year, assume the current year.
 - **commercialAsk** — any pricing expectation the customer states (e.g. "last time you gave 8% on
   bearings, please keep same"), verbatim. Null if none.
 

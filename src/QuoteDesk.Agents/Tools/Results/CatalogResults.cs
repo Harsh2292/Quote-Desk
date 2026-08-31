@@ -17,14 +17,29 @@ public sealed record CatalogCandidate
     public required string Reason { get; init; }
 }
 
+/// <summary>One line item's worth of search input — <c>search_catalog</c> takes an array of these
+/// instead of one query at a time, so the model resolves every line in a single tool call rather than
+/// one call per line (found live: the per-line version cost 3 real Gemini calls for a 3-line enquiry,
+/// eating into the free-tier daily quota faster than necessary for no benefit — see
+/// docs/SESSION-LOG.md).</summary>
+public sealed record CatalogSearchQuery
+{
+    public required string Query { get; init; }
+    public string[] Hints { get; init; } = [];
+}
+
 /// <summary>
-/// The result of <c>search_catalog</c>. SPEC originally described this tool as returning a bare
-/// <c>CatalogMatch[]</c>, but an array has no way to express "I cannot tell which of these you
-/// mean" — <see cref="Outcome"/> carries that explicitly, corrected in docs/SPEC.md §7 in the same
-/// commit as this type.
+/// One query's result within a <c>search_catalog</c> call. SPEC originally described this tool as
+/// returning a bare <c>CatalogMatch[]</c>, but an array has no way to express "I cannot tell which of
+/// these you mean" — <see cref="Outcome"/> carries that explicitly, corrected in docs/SPEC.md §7 in
+/// the same commit as this type.
 /// </summary>
 public sealed record CatalogSearchResult
 {
+    /// <summary>Echoes the <see cref="CatalogSearchQuery.Query"/> this result answers, so a batched
+    /// call's results can be matched back to the line item that produced each one.</summary>
+    public required string Query { get; init; }
+
     /// <summary>"resolved" | "ambiguous" | "not_found".</summary>
     public required string Outcome { get; init; }
 

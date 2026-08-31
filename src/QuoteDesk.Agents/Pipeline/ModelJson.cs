@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace QuoteDesk.Agents.Pipeline;
 
@@ -46,5 +48,47 @@ public static class ModelJson
         var braceStart = text.IndexOf('{', StringComparison.Ordinal);
         var braceEnd = text.LastIndexOf('}');
         return braceStart >= 0 && braceEnd > braceStart ? text[braceStart..(braceEnd + 1)] : text.Trim();
+    }
+}
+
+/// <summary>
+/// A model does not follow a formatting instruction with 100% reliability — confirmed live against
+/// real <c>gemini-3.6-flash</c> during task 07's manual verification, where <c>requiredBy</c> came
+/// back as the ISO date the prompt asks for on one run and the literal word <c>"5th"</c> on another,
+/// for the same enquiry. The strict built-in <see cref="DateOnly"/> converter throws on the second
+/// case, which would fail the entire Extract stage over one optional, informational field — nothing
+/// downstream depends on <c>RequiredBy</c> being present (docs/DOMAIN.md's actual delivery dates are
+/// computed by <c>QuoteDesk.Domain</c> from stock and lead time, never from what the customer asked
+/// for). So this degrades a date it cannot confidently parse to null, the same as the field never
+/// having been stated at all, rather than letting one messy field take down the whole run.
+/// </summary>
+public sealed class LenientNullableDateOnlyConverter : JsonConverter<DateOnly?>
+{
+    public override DateOnly? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType is JsonTokenType.Null)
+        {
+            return null;
+        }
+
+        var text = reader.GetString();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        return DateOnly.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out var value) ? value : null;
+    }
+
+    public override void Write(Utf8JsonWriter writer, DateOnly? value, JsonSerializerOptions options)
+    {
+        if (value is { } date)
+        {
+            writer.WriteStringValue(date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        }
+        else
+        {
+            writer.WriteNullValue();
+        }
     }
 }

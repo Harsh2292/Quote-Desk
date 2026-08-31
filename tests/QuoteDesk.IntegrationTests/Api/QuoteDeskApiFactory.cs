@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using QuoteDesk.Api.Auth;
 using QuoteDesk.Data;
+using QuoteDesk.Data.Seed;
 using QuoteDesk.IntegrationTests.Data;
 
 namespace QuoteDesk.IntegrationTests.Api;
@@ -43,6 +45,9 @@ public sealed class QuoteDeskApiFactory : WebApplicationFactory<Program>, IAsync
         Environment.SetEnvironmentVariable("Auth__Jwt__Audience", "quotedesk-tests");
         Environment.SetEnvironmentVariable("Auth__Jwt__LifetimeHours", "8");
         Environment.SetEnvironmentVariable("Auth__AdminEmails__0", AdminEmail);
+        // Program.cs now fails fast on an empty Llm:ApiKey (task 07) — a placeholder is enough since
+        // IChatClient itself is swapped for ScriptableChatClient below and never reaches a real provider.
+        Environment.SetEnvironmentVariable("Llm__ApiKey", "test-key");
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -51,17 +56,24 @@ public sealed class QuoteDeskApiFactory : WebApplicationFactory<Program>, IAsync
         {
             services.RemoveAll<IGoogleIdTokenValidator>();
             services.AddSingleton<IGoogleIdTokenValidator, StubGoogleIdTokenValidator>();
+
+            // CLAUDE.md: "Integration tests use a stubbed IChatClient. CI must pass with no network
+            // and no API key." ScriptableChatClient wraps a per-test-scriptable StubChatClient.
+            services.RemoveAll<IChatClient>();
+            services.AddSingleton<ScriptableChatClient>();
+            services.AddSingleton<IChatClient>(sp => sp.GetRequiredService<ScriptableChatClient>());
         });
     }
 
     public async Task InitializeAsync()
     {
-        // Forces host creation now rather than on the first HTTP request, so a fresh, migrated
-        // database is guaranteed before any test's first call.
+        // Forces host creation now rather than on the first HTTP request, so a fresh, migrated,
+        // seeded database is guaranteed before any test's first call.
         await using var scope = Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<QuoteDeskDbContext>();
         await db.Database.EnsureDeletedAsync();
         await db.Database.MigrateAsync();
+        await DeterministicSeeder.SeedAsync(db, CancellationToken.None);
     }
 
     public new async Task DisposeAsync()

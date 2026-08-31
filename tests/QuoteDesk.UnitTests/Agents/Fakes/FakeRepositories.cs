@@ -86,6 +86,11 @@ internal sealed class FakeQuoteRepository : IQuoteRepository
     public Task<QuoteRecord?> GetByIdAsync(int id, CancellationToken cancellationToken) =>
         Task.FromResult(_quotes.SingleOrDefault(q => q.Id == id));
 
+    public Task<IReadOnlyList<QuoteSummaryRecord>> ListAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<QuoteSummaryRecord>>(
+            [.. _quotes.OrderByDescending(q => q.CreatedAt)
+                .Select(q => new QuoteSummaryRecord(q.Id, q.EnquiryId, q.Number, q.Status, null, null, q.Total, q.CreatedAt, q.ValidUntil))]);
+
     public Task<QuoteRecord> CreateDraftAsync(NewQuote quote, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(quote);

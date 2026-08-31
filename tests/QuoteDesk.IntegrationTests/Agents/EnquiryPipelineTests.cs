@@ -27,7 +27,7 @@ public class EnquiryPipelineTests(RepositoryFixture fixture)
     public async Task StartAsync_ShreejiWorkedExample_SuspendsAtApprovalWithSpindleTapeUnresolved()
     {
         var shreeji = await fixture.Customers.FindByEmailDomainAsync("shreejitextiles.com", CancellationToken.None);
-        var stub = new StubChatClient(BuildWorkedExampleTurns(shreeji!.Id));
+        var stub = new StubChatClient(WorkedExampleScript.BuildWorkedExampleTurns(shreeji!.Id));
         var pipeline = BuildPipeline(stub);
 
         var events = await CollectAsync(pipeline.StartAsync(ShreejiEnquiryId, CancellationToken.None));
@@ -60,7 +60,7 @@ public class EnquiryPipelineTests(RepositoryFixture fixture)
     public async Task ResumeAsync_Approved_CreatesAndSendsTheQuote()
     {
         var shreeji = await fixture.Customers.FindByEmailDomainAsync("shreejitextiles.com", CancellationToken.None);
-        var stub = new StubChatClient(BuildWorkedExampleTurns(shreeji!.Id));
+        var stub = new StubChatClient(WorkedExampleScript.BuildWorkedExampleTurns(shreeji!.Id));
         var pipeline = BuildPipeline(stub);
 
         var startEvents = await CollectAsync(pipeline.StartAsync(ShreejiEnquiryId, CancellationToken.None));
@@ -98,7 +98,7 @@ public class EnquiryPipelineTests(RepositoryFixture fixture)
         // each phase below is built completely from scratch, sharing nothing but the same underlying
         // SQL rows a real restart would also leave behind.
         var shreeji = await fixture.Customers.FindByEmailDomainAsync("shreejitextiles.com", CancellationToken.None);
-        var turns = BuildWorkedExampleTurns(shreeji!.Id);
+        var turns = WorkedExampleScript.BuildWorkedExampleTurns(shreeji!.Id);
 
         var startPipeline = BuildPipeline(new StubChatClient(turns));
         var startEvents = await CollectAsync(startPipeline.StartAsync(ShreejiEnquiryId, CancellationToken.None));
@@ -196,54 +196,4 @@ public class EnquiryPipelineTests(RepositoryFixture fixture)
 
         return list;
     }
-
-    /// <summary>
-    /// One scripted turn per model round-trip for the whole Shreeji Textiles worked example
-    /// (docs/DOMAIN.md): Extract (1 turn), Resolve's tool-calling loop (5 turns — resolve_customer,
-    /// three search_catalog calls, one get_customer_history call for the ambiguous spindle tape —
-    /// then a final resolution turn), and Price's narration (1 turn). Every tool call in between is
-    /// executed for real against <see cref="RepositoryFixture"/>'s seeded database.
-    /// </summary>
-    private static List<ChatResponse> BuildWorkedExampleTurns(int shreejiCustomerId)
-    {
-        List<ChatResponse> turns =
-        [
-            Text("""
-                {"lines":[
-                    {"description":"250 nos of the 6203 bearings (same as last time)","quantity":250,"uom":"nos"},
-                    {"description":"40 mtr of the 25mm PU timing belt","quantity":40,"uom":"mtr"},
-                    {"description":"12 pcs ring frame spindle tape, the thicker one","quantity":12,"uom":"pcs"}
-                ],
-                "companyName":"Shreeji Textiles","shipTo":"Sachin","requiredBy":"2026-03-05",
-                "commercialAsk":"last time you gave 8% on bearings, please keep same"}
-                """),
-            Call("resolve_customer", new Dictionary<string, object?> { ["companyName"] = "Shreeji Textiles", ["senderId"] = "kiran@shreejitextiles.com" }),
-            Call("search_catalog", new Dictionary<string, object?> { ["query"] = "6203 bearing", ["hints"] = new[] { "same as last time" } }),
-            Call("search_catalog", new Dictionary<string, object?> { ["query"] = "25mm PU timing belt", ["hints"] = Array.Empty<string>() }),
-            Call("search_catalog", new Dictionary<string, object?> { ["query"] = "ring frame spindle tape", ["hints"] = new[] { "thicker" } }),
-            Call("get_customer_history", new Dictionary<string, object?> { ["customerId"] = shreejiCustomerId, ["sku"] = null }),
-            Text($$"""
-                {"customerId":{{shreejiCustomerId}},"lines":[
-                    {"originalDescription":"250 nos of the 6203 bearings (same as last time)","quantity":250,"sku":"BRG-6203-2RS","reason":"Exact SKU match, confirmed by three prior purchases at the same rate."},
-                    {"originalDescription":"40 mtr of the 25mm PU timing belt","quantity":40,"sku":"BELT-PU-25MM","reason":"Clean catalogue match."},
-                    {"originalDescription":"12 pcs ring frame spindle tape, the thicker one","quantity":12,"sku":null,"reason":"Search returned several thickness variants too close to tell apart, and order history has no prior spindle tape purchase to break the tie — needs a human to pick."}
-                ]}
-                """),
-            Text("Bearings and belt priced within policy at 8%; the spindle tape thickness is unresolved and needs your input; the belt's delivery misses the requested date."),
-        ];
-
-        return turns;
-    }
-
-    private static ChatResponse Text(string text) => new(new ChatMessage(ChatRole.Assistant, text))
-    {
-        Usage = new UsageDetails { InputTokenCount = 50, OutputTokenCount = 50 },
-    };
-
-    private static ChatResponse Call(string name, Dictionary<string, object?> arguments) => new(new ChatMessage(
-        ChatRole.Assistant,
-        [new FunctionCallContent(callId: Guid.NewGuid().ToString(), name: name, arguments: arguments)]))
-    {
-        Usage = new UsageDetails { InputTokenCount = 50, OutputTokenCount = 20 },
-    };
 }
