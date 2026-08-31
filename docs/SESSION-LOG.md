@@ -709,3 +709,8 @@ two SKUs` all gone); `dotnet build -warnaserror` clean; 171 tests green; `npm ru
 
 **Next:** Task 09 — deploy. First a clean local live run of the worked example to confirm the
 agent-layer rework works against the real API + model before it goes public.
+
+**Git state at session end:** two commits on `development` — `f131fcc` (agent-layer rework) and
+`b059337` (doc reconciliation). `development` fast-forward-merged into `main`; both branches now at
+`b059337`. **Neither branch is pushed** — `origin/main` is at `3ba6b67`, `origin/development` at
+`a7fb4f3`. Push is Harsh's to run. Build clean, 171 tests green, working tree clean.
