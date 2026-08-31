@@ -714,3 +714,49 @@ agent-layer rework works against the real API + model before it goes public.
 `b059337` (doc reconciliation). `development` fast-forward-merged into `main`; both branches now at
 `b059337`. **Neither branch is pushed** — `origin/main` is at `3ba6b67`, `origin/development` at
 `a7fb4f3`. Push is Harsh's to run. Build clean, 171 tests green, working tree clean.
+
+## 2026-08-31 — First live run of the reworked pipeline (partial success)
+
+**What ran:** two attempts against the real `gemini-3.6-flash`.
+
+- **Enquiry #2004 (real):** Extract → Resolve (`resolve_customer`, `search_catalog`,
+  `get_customer_history`, `check_stock`) → Price all **succeeded**. The 6th and final model call —
+  Price's Narrate step — got `429`d: `GenerateRequestsPerMinutePerProjectPerModel-FreeTier`,
+  `limit: 5`, "retry in 50s". Mapped correctly to `provider_rate_limited`; the replay panel showed,
+  the enquiry text and trace were kept, navigating away and back preserved everything.
+- **Enquiry #2005:** this was the **replayed fixture**, not a live run (Harsh clicked "Replay this
+  run"). Reproduced the worked example faithfully — correct SKUs, the spindle-tape line unresolved,
+  the belt date conflict, totals matching docs/DOMAIN.md. Approve/Reject correctly disabled (a
+  replay has no `AgentRun` to POST to; the card says so).
+
+**Confirmed working against the real model:**
+- Schema-enforced JSON output on `gemini-3.6-flash` — Extract ran clean, no fallback warning.
+- The two-stage retrieval fix — `search_catalog` did ~15 sub-millisecond `LIKE` queries then ranked
+  in memory. No candidate flood. The pipeline sailed through Resolve.
+- `get_customer_history` 20-row cap — visible in the SQL as `SELECT TOP(@p) … ORDER BY OrderedAt DESC`.
+- `BudgetedChatClient`, the `provider_rate_limited` mapping, and the Desk state persistence.
+
+**The blocker is the per-minute limit, not the daily one.** `gemini-3.6-flash` free tier is
+**5 requests/minute**. One pipeline run makes ~6 sequential model calls (1 Extract + ~4 Resolve +
+1 Narrate) in ~40 s, and they bunch. Extract alone took ~13 s on the first attempt (thinking-model
+overhead), ~40 s total.
+
+**"Replay this run" is a canned fixture, not a resume.** A failed run cannot be continued from where
+it stopped — there is no checkpoint-resume for a mid-pipeline failure, only re-run from Extract.
+
+**Next session — do these first, in order:**
+1. **Model routing (~35 lines).** Try the simplest thing first: move **all three stages to
+   `gemini-3.5-flash-lite`** (500/day, higher RPM, no thinking lag) and re-test. The earlier "poor
+   judgement" verdict on the Lite models was reached while they were being handed 342 candidates —
+   likely stale now. If Resolve holds on Lite, the quota/RPM problem is gone. If not, per-stage:
+   Extract + Narrate on Lite, Resolve on `gemini-3.6-flash`. Shape: optional per-stage model
+   overrides on `LlmOptions`, `ChatClientFactory` builds one client per distinct model, the pipeline
+   picks per agent.
+2. **Then the code review + security review + codebase walkthrough** — moved to **before task 09**
+   (was: between 09 and 10). Rationale: understand the system before it goes public and before task
+   10 adds channels; a security review belongs before the URL is live. The deploy-config half of the
+   security review (Dockerfile, CI, secrets, CORS, public rate limiter) folds into task 09 itself.
+   `tasks/README.md`'s milestone row needs moving to match.
+3. Then task 09 (deploy), then task 10 (channels).
+
+**Git:** unchanged from the entry above — `main` = `development` = `57e5842`, neither pushed.
