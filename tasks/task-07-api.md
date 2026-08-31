@@ -139,3 +139,17 @@ already-fixed finding from the same run: the model didn't reliably format `requi
 (`extract.md` and a new `LenientNullableDateOnlyConverter` fix this, both in this commit). The dev
 database was also found two migrations behind (missing `AddAgentRuns`/`AddAgentRunTrace`) and has been
 brought current.
+
+---
+
+**Amended 2026-08-31 — agent-layer rework.**
+
+- **`ToErrorEvent` now maps provider context-limit failures to `budget_exceeded`.** A provider
+  `400`/`413` whose message mentions tokens or context length — the failure mode that took down
+  task 08's first live run — was falling through to a bare `internal`. It now reports
+  `budget_exceeded`, and **every** failure logs the full exception (type, message, stack) at `Error`
+  level with the correlation id, so the next one is diagnosable from the server log rather than by
+  reading `AgentRuns.TraceJson` by hand. The client still only ever sees the shaped `ErrorEvent`.
+- **All model calls now go through logging middleware.** The one `IChatClient` singleton is wrapped
+  with `.UseLogging(loggerFactory)` at registration, so the request and response of every Extract /
+  Resolve / Narrate call are in the log.

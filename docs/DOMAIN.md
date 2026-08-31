@@ -51,8 +51,10 @@ What the system does with it:
 2. **Resolve customer** — Shreeji Textiles matched on the sender's domain. Tier B, 45-day credit,
    default ship-to Sachin.
 3. **Resolve items** —
-   - `6203` matches two SKUs, `BRG-6203-2RS` and `BRG-6203-ZZ`. Order history shows three prior
-     purchases of the 2RS, so it resolves — **with the reason recorded**.
+   - `6203` names the series but not the sealing suffix, and the catalogue carries four of them
+     (`BRG-6203-2RS`, `-ZZ`, `-RS`, `-2Z`), so `search_catalog` returns `ambiguous` across that axis.
+     Order history shows three prior purchases of the 2RS, so it resolves — **with the reason
+     recorded**.
    - The 25mm PU belt matches cleanly.
    - "spindle tape, the thicker one" has 6mm and 8mm variants and no purchase history.
      **Unresolved. Flagged for the human.** It does not guess.

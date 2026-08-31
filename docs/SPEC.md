@@ -234,7 +234,8 @@ never see a blank error.
 defaults only, per CLAUDE.md's Security rules): `Endpoint` (defaults to the Gemini endpoint above),
 `ApiKey` (empty; set locally via `dotnet user-secrets set "Llm:ApiKey" "<key>" --project src/QuoteDesk.Api`),
 `Model` (defaults to `gemini-3.6-flash`), `MaxToolCalls` (8), `TokenBudget` (20000, generous rather than
-tuned against a live model — revisit once real runs give real numbers). Bound into
+tuned against a live model — revisit once real runs give real numbers), `UseStructuredOutput` (default
+`true` — see below). Bound into
 `QuoteDesk.Agents.Llm.LlmOptions` and passed to `AddQuoteDeskAgentPipeline`, the same pattern
 `AddQuoteDeskData` uses for its connection string rather than `QuoteDesk.Agents` depending on
 `Microsoft.Extensions.Configuration` itself. **Resolved in task 07:** wired into `Program.cs`, and an
@@ -242,14 +243,25 @@ empty `Llm:ApiKey` fails fast the same way `Auth:Google:ClientId` already did. *
 to `"gemini"`) added alongside the `thought_signature` fix above — see `LlmOptions.cs`'s remarks for
 why the two profiles could no longer share one client differing only by `Endpoint`.
 
-**Structured output — deliberately not used.** `AIAgent.RunAsync<T>()`'s built-in `json_schema`
-response-format mode was confirmed to exist and work mechanically (decompiled), but whether Gemini's
-OpenAI-compatibility endpoint actually honours `response_format: {type: "json_schema"}` for
-`gemini-3.6-flash` specifically is **unverified** — official docs are silent, and the only evidence
-found is an unconfirmed community forum report. Every model call in the pipeline instead asks for
-plain text and parses JSON out of it tolerantly (`QuoteDesk.Agents.Pipeline.ModelJson`, stripping a
-` ```json ` fence if present), uniformly rather than as a caught-failure fallback — cheap insurance,
-and it sidesteps a second unverified provider behaviour after `thought_signature` already cost a day.
+**Per-stage model selection and provider fallback are task 09's**, not built. Today one `Model` is
+used for all three model call types (Extract, Resolve, Narrate) and a provider 429 ends the run.
+Task 09 splits the two easy stages onto a cheap high-quota model and adds a per-run fallback — see
+`tasks/task-09-deploy.md`.
+
+**Structured output — now used, corrected in the 2026-08-31 agent-layer rework.** This section
+originally said schema-enforced output was deliberately avoided because Gemini's support for it was
+unverified. It is now used, with a fallback rather than an avoidance:
+`QuoteDesk.Agents.Pipeline.StructuredModelCall` asks the provider to enforce a JSON schema —
+generated from the C# result type itself via `ChatResponseFormat.ForJsonSchema<T>`, so there is no
+hand-written schema to drift — on the **Extract** and **Narrate** stages. If the provider rejects
+schema mode, it falls back to the tolerant `ModelJson` parser for that call and logs a warning
+(flip `Llm:UseStructuredOutput` to `false` to stop paying for the rejected attempt). Under both
+paths, an unparseable reply is **retried once with the parse error fed back** — before this, one
+reply of prose instead of JSON killed the whole run with no recovery. **Resolve deliberately stays
+on plain-text parsing**: it is the one stage that calls tools, a strict response format would apply
+to every turn of the tool loop, and whether a given provider handles that combination is unverified.
+Whether `gemini-3.6-flash` honours schema mode at all is still unverified until the first live run —
+the fallback exists precisely for that.
 
 ## 5. Intake
 
@@ -363,9 +375,10 @@ task 07" for what it stores and why.
   other tool's validation style (a typed miss, never an exception) — an unknown enquiry or an empty
   line list returns `Created = false` with a `Reason` rather than throwing.
 
-`search_catalog` returns candidates with a confidence and a reason, and an explicit ambiguous result
-when it cannot choose. `get_customer_history` is what resolves "same as last time" — the tool that
-makes the demo feel intelligent. `price_quote` calls `QuoteDesk.Domain` and nothing else.
+`search_catalog` returns ranked candidates with a confidence and an explicit ambiguous result when it
+cannot choose (see the retrieval rewrite below). `get_customer_history` is what resolves "same as
+last time" — the tool that makes the demo feel intelligent. `price_quote` calls `QuoteDesk.Domain`
+and nothing else.
 
 Read and write registries are separate objects (`ReadToolRegistry`, `WriteToolRegistry` in
 `QuoteDesk.Agents.Tools`); the Resolve agent is constructed with the read registry only — enforced by
@@ -391,6 +404,34 @@ from 6 real model calls to 4, and the whole pipeline from 8 to 6. No change was 
 `ResolveExecutor`, `TracedAIFunction`, or `ToolCallBudget` — none of them ever assumed one
 `search_catalog` call resolved exactly one line, so the batching is entirely internal to
 `CatalogTools`, `CatalogSearchQuery`/`CatalogSearchResult`, and the prompt.
+
+**`search_catalog` was rebuilt as a two-stage ranker in the 2026-08-31 agent-layer rework — the
+change that fixes task 08's first live run.** That run failed because the old scorer matched on
+letters, not words: a query for a *PU* belt also matched every *s**pu**r* gear, a query for a *ring*
+frame tape matched every *bea**ring***, and nothing was ever capped, so `search_catalog` returned
+**342 candidates from a 262-row catalogue** — one 56 KB tool result, re-sent on every turn of the
+tool loop until the provider refused. What it does now:
+
+- **Stage one, recall:** the existing cheap substring lookup per search word, unioned.
+- **Stage two, precision:** re-rank that shortlist with *whole-word* matching, weighted by inverse
+  document frequency, so a rare distinguishing word (`PU`, `6203`, `2RS`, `25mm`) counts far more
+  than a common family word (`belt`, `bearing`). Scoring is an additive sum of matched-word weights,
+  so an extra hint can only help a candidate — this fixes the bug where the junk word `as` (from
+  "same as last time") dragged a perfect 6203 match below the resolve threshold.
+- **An absolute and a relative confidence floor**, then a **hard cap of five candidates** in every
+  outcome — a query that cannot answer in five rows returns `ambiguous` or `not_found`.
+- `CatalogCandidate` slimmed to `Sku`, `Name`, `Category`, `Attributes`, `Confidence` — the per-row
+  `Reason`, `Uom` and `ListPrice` are gone (the model never prices; one `Reason` on the
+  `CatalogSearchResult` explains the outcome).
+- `resolve.md` now states the catalogue's grid structure up front (four families, two axes each) so
+  the model's queries carry the family word and the distinguishing spec.
+- `TracedAIFunction` also caps what a tool result writes into the trace at ~8 KB — belt-and-braces
+  for a future tool that forgets to cap itself, since a tool result is paid for three times over
+  (model input, SSE stream, `AgentRuns.TraceJson`).
+
+**`get_customer_history` is capped at the 20 most-recent rows** (`OrderHistoryRepository`). It
+returned all ~48 of a customer's orders, re-sent every turn — the second-worst driver of runaway
+token cost. Twenty most-recent still answers "same as last time".
 
 ## 8. API
 
@@ -483,6 +524,26 @@ type AgentEvent =
   of the daily quota. Only a `429` on the stream fetch triggers the replay picker; a run that
   exhausts the token budget instead surfaces `budget_exceeded` and renders as a plain error with a
   retry. Widening the picker to any provider failure is a small follow-up.
+
+**Resolved in the 2026-08-31 agent-layer rework:**
+
+- **The token budget is a governor now, not a post-mortem.** `BudgetedChatClient` wraps the chat
+  client and counts every model round-trip against the run's `TokenUsageTracker` as it happens,
+  throwing the moment the budget is breached. Before, counting happened only after a whole agent run
+  finished, so Resolve's tool loop could spend several times the budget before anything looked — one
+  recorded run reached 56,463 tokens against a 20,000 budget and reported it only once it was over.
+  This is also the single place tokens are counted; the three scattered `tokens.Add(...)` calls in
+  the executors are gone.
+- **`budget_exceeded` is also raised for provider context-limit failures.** `EnquiryPipeline
+  .ToErrorEvent` now maps a provider `400`/`413` whose message mentions tokens or context length to
+  `budget_exceeded`, not a bare `internal` — the failure mode that took down task 08's first live
+  run. Every failure also logs the full exception (type, message, stack) at `Error` level with the
+  correlation id, so the next one is diagnosable from the server log rather than by reading
+  `AgentRuns.TraceJson` by hand. The client still only ever sees the shaped `ErrorEvent`.
+- **The frontend still treats only `429` specially.** `budget_exceeded` and `internal` both render
+  as a plain trace-panel error; the recorded-run replay picker — which exists for exactly this — is
+  not offered for them yet. Tracked in `tasks/task-08-web.md`'s notes and picked up in the post-09
+  review pass.
 
 ## 9. Non-goals — refuse these
 

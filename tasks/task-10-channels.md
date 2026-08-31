@@ -57,3 +57,9 @@ graceful degradation, and it goes in the README as honest future work.
 Replying over WhatsApp. Meta Cloud API unless verification lands. Any audio processing.
 
 ## Notes on completion
+
+## Added 2026-08-31
+
+- Extract now uses schema-enforced output with few-shot examples (docs/SPEC.md §4). That helps the
+  messier text an image-to-text enquiry produces on the `gemini` profile — no structural change to
+  the channel work, just a note that the "photo of a written list" path benefits for free.

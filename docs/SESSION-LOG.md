@@ -586,11 +586,14 @@ plain-language labels, never raw tool names — Harsh's call, now in SPEC §8 + 
 memory `ui-hides-internal-identifiers`. Approve/reject only, no ambiguous-line dropdown (needs
 `UnresolvedLine.Candidates[]` server-side — deferred shape written into SPEC §8).
 
-**Known gaps:** Integration tests (40) were NOT run — Docker Desktop is down so SQL Server is
-unavailable; changes are TS-only so no C# regression, but this needs re-running with `docker compose up -d`.
-No live end-to-end smoke test for the same reason — SSE parsing and the post-refresh approval-id
-resolution (scans `GET /api/approvals`) are unverified against the real API. Only a `429` triggers the
-replay picker; `budget_exceeded` renders as a plain error. `provider_rate_limited` replay cards have
+**Tests:** After Docker came up, the full non-eval suite passes — 118 unit + 40 integration
+(`dotnet test --filter "FullyQualifiedName!~Evals"`). Evals were deliberately not run to preserve the
+Gemini free-tier daily quota.
+
+**Known gaps:** No live end-to-end smoke test through the real pipeline yet — SSE parsing and the
+post-refresh approval-id resolution (scans `GET /api/approvals`) are unverified against a running
+API + Gemini; Harsh wants to drive the first full flow himself. Only a `429` triggers the replay
+picker; `budget_exceeded` renders as a plain error. `provider_rate_limited` replay cards have
 Approve/Reject disabled (no real `AgentRun` id). Pre-existing `only-export-components` oxlint warning
 on `AuthContext.tsx` left as-is.
 
@@ -599,3 +602,110 @@ demo run can happen.
 
 **Next:** Task 09 — deploy (Docker, CI, live URL). First get a clean local end-to-end run with Docker
 up to confirm task 08 works against the real API before deploying it.
+
+## 2026-08-31 — Re-engineering the agent layer (retrieval, reliability, ceilings)
+
+**Why:** Task 08's first real run failed. Root cause found by reading the stored trace: `search_catalog`
+returned **342 candidates from a 262-row catalogue** — one tool result was 56 KB, 92% of the run's
+record, re-sent on every turn of the tool loop until the provider gave up. The model's queries were
+good; our retrieval was not.
+
+**Two mechanisms, both confirmed against the real database.** We matched on letters, not whole words,
+so "PU" also matched every "s**pu**r gear" (110 rows) and "ring" matched every "bea**ring**" (88 rows).
+And nothing was ever capped — even a cleanly *resolved* query returned every near-miss.
+
+**Done:**
+- **Desk keeps its state.** A session provider sits above the router, so navigating to Approvals and
+  back no longer destroys the enquiry, trace and error; it also survives a browser refresh via
+  `sessionStorage` (400 KB cap, drops the trace before overflowing). Added **New enquiry**, **Retry**
+  and **Edit & re-run**. Nothing clears except New enquiry or a successful approve. The Desk tab now
+  links back to the run in progress.
+- **Retrieval rewritten as two-stage.** Cheap substring shortlist, then a whole-word re-rank weighted
+  by inverse document frequency, so rare distinguishing words (`PU`, `6203`, `2RS`, `25mm`) outweigh
+  family words (`belt`, `bearing`). Scoring is additive, which fixes the bug where the junk hint word
+  "as" (from "same as last time") dragged a perfect match below the resolve threshold. Absolute **and**
+  relative confidence floors, hard cap of **5 candidates**. Candidate payload slimmed (dropped
+  per-row reason, list price, uom). `get_customer_history` capped at 20 rows.
+- **Output reliability.** New `StructuredModelCall`: provider-enforced JSON schema generated from the
+  C# type (`Llm:UseStructuredOutput`, default true), falling back to the tolerant parser if the
+  provider rejects it, plus **retry-once with the parse error fed back**. Schema mode is deliberately
+  OFF for Resolve — it is the tool-calling stage and a strict response format applies to every turn of
+  the loop. Few-shot examples added to `extract.md` and `resolve.md`, both showing the "I cannot tell"
+  answer being used correctly.
+- **Ceilings.** `BudgetedChatClient` counts tokens per model round-trip instead of after each stage,
+  so the budget is a governor not a post-mortem — and it is now the *only* place tokens are counted.
+  Defensive 8 KB cap on what a tool result writes into the trace.
+- **Visibility.** All model calls go through logging middleware; the pipeline logs the full exception
+  on failure and maps provider context-limit errors to `budget_exceeded` instead of a bare `internal`.
+
+**Files that matter:** `src/QuoteDesk.Agents/Tools/CatalogTools.cs` (the ranker),
+`Pipeline/StructuredModelCall.cs`, `Pipeline/BudgetedChatClient.cs`,
+`src/QuoteDesk.Web/src/desk/DeskSessionContext.tsx`.
+
+**Verified:** 171 tests green (123 unit + 48 integration), up from 158. Against the **real seeded
+database**: the worked example's three lines now come back `ambiguous` (6203 — needs the suffix),
+`resolved` → `BELT-PU-25MM` (not the rubber belt), `ambiguous` (spindle tape thickness), with no
+result exceeding 5 candidates. Six fully-specified seeded phrasings — including Hinglish
+("6210 ZZ bearing ka rate bhejo") — resolve to the exact expected SKU. A new test proves a model reply
+of prose instead of JSON is now retried rather than fatal.
+
+**Decisions:** Chose two-stage retrieval + rarity ranking + schema exposure in the prompt, researched
+against how Google AI Mode (query fan-out, rank, synthesise) and Elastic/Anthropic tool-design guidance
+actually work. Deliberately NOT used: vector search (our discriminators are exact tokens like 6mm vs
+8mm, which embeddings blur), Lucene (a search engine for 262 rows), SQL full-text (needs container and
+Azure config plus raw SQL for the rank). Hand-rolled ~40 lines instead — the right call at this size,
+and Harsh chose it explicitly on portfolio grounds. Self-querying structured filters were deferred
+pending measurement; the ranker alone proved sufficient.
+
+**Known gaps:** No live model run yet — whether `gemini-3.6-flash` honours schema-enforced output is
+still unverified, and the first live run will log a warning and fall back if it does not. Response
+caching and conversation trimming (`UseDistributedCache`, `UseChatReducer`) considered and skipped.
+The project's own SPEC/DOMAIN/task docs are now out of step with the code and need a rewrite pass.
+
+**Blocked on Harsh:** The one live end-to-end run — he asked to drive it himself and to keep the
+Gemini free-tier daily allowance for it.
+
+**Next:** Live run of the worked example through the UI. Then re-test `gemini-3.5-flash-lite` (500/day
+vs 20/day): the earlier "poor judgement" verdict is unsafe, because that model was judged while being
+handed 342 candidates. If it now works, the quota problem disappears entirely.
+
+## 2026-08-31 — Doc reconciliation + tasks 09–11 re-scope (no product code)
+
+**Why:** the agent-layer rework left the project's own documents describing a system that no longer
+exists, and tasks 09–11 predated it. Harsh will read the whole codebase against `docs/SPEC.md` in a
+review pass after task 09, so SPEC has to be true first.
+
+**Done — docs now match the code:**
+- `docs/SPEC.md` §4 — "structured output deliberately not used" replaced with what is actually there
+  (`StructuredModelCall`: schema mode for Extract/Narrate, tolerant-parser fallback, retry-once-with-
+  the-error; Resolve stays plain-text). New `Llm:UseStructuredOutput` key. Per-stage model routing
+  noted as task 09's.
+- §7 — the two-stage `search_catalog` ranker written up (whole-word + IDF, additive scoring, 5-cap,
+  slim `CatalogCandidate`), `get_customer_history` 20-row cap, the 8 KB trace cap.
+- §8 — `BudgetedChatClient` (token budget is a governor now), `budget_exceeded` for provider
+  context-limit errors, full-exception logging. Recorded that the frontend still only special-cases
+  `429`.
+- `docs/DOMAIN.md` — worked example step 3 corrected (6203 has four suffix variants, not two).
+- `CLAUDE.md` — added the "Desk keeps its state" rule.
+- `ChatClientFactory.cs` — one-line comment fix (cited a `GoogleGenAiSpike.cs` that never existed).
+- Amendment blocks appended to `tasks/task-06/07/08` Notes on completion.
+
+**Done — task files re-scoped:**
+- **task 09** gains: model routing (Extract/Narrate on `gemini-3.5-flash-lite` 500/day, Resolve on
+  `3.6-flash` 20/day) + per-run provider fallback, no user selector; sign-in screen polish; OAuth
+  origin for the prod URL; the still-unbuilt rate limiter.
+- **task 11** "Expanded" section: OpenTelemetry is entirely green-field; per-stage token/duration
+  needs server-side emission; the eval "golden set" doesn't exist (3 files, same enquiry); no
+  prompt-injection behavioural test; ADR-0002 reasoning is ready to write.
+- **tasks/README.md** — added an "agent-layer rework (done)" row and a "code review + security
+  review + codebase walkthrough" milestone between 09 and 10, where the audit's small correctness
+  bugs (streaming-401 hole, deep-link-404 infinite load, swallowed Google `onError`) belong.
+
+**Verified:** no stale phrases left in docs (`deliberately not used`, `GoogleGenAiSpike`, `matches
+two SKUs` all gone); `dotnet build -warnaserror` clean; 171 tests green; `npm run build` clean.
+
+**Blocked on Harsh:** still the one live end-to-end run (his to drive), which also settles whether
+`gemini-3.6-flash` honours schema-enforced output.
+
+**Next:** Task 09 — deploy. First a clean local live run of the worked example to confirm the
+agent-layer rework works against the real API + model before it goes public.

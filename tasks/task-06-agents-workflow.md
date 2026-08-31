@@ -168,3 +168,23 @@ unchanged (task 06 touched no frontend code).
 **Next:** Task 07 — API, streaming, auth, logging. Wires `EnquiryPipeline` behind
 `POST /api/enquiries/{id}/process` (SSE) and `POST /api/approvals/{id}`, binds `LlmOptions` in
 `Program.cs`, and decides the fail-fast question this task deliberately left open.
+
+---
+
+**Amended 2026-08-31 — agent-layer rework.** Three things this task decided were later revisited:
+
+- **Structured output, deliberately skipped here, is now used** on Extract and Narrate. The
+  `AIAgent.RunAsync<T>()` schema mode this task's Notes rejected as unverified is now wrapped in
+  `QuoteDesk.Agents.Pipeline.StructuredModelCall`, which enforces a schema generated from the C#
+  result type, falls back to the tolerant `ModelJson` parser if the provider rejects it, and — under
+  either path — **retries once with the parse error fed back**. One reply of prose instead of JSON
+  used to kill a whole run with no recovery. Resolve deliberately stays on plain-text parsing (it is
+  the tool-calling stage). See docs/SPEC.md §4.
+- **The token budget became a real governor.** `TokenUsageTracker` was a post-mortem tripwire —
+  counted only after a whole agent run finished, so Resolve's tool loop could spend several times the
+  budget first. `BudgetedChatClient` now wraps the chat client and counts every round-trip as it
+  happens, and is the single place tokens are counted (the executors' scattered `tokens.Add` calls
+  are gone).
+- `CatalogTools` was rebuilt as a two-stage ranker and `get_customer_history` capped at 20 rows —
+  see docs/SPEC.md §7. `resolve.md`, `extract.md` and `narrate.md` were rewritten with few-shot
+  examples and (for `resolve.md`) the catalogue's grid structure.

@@ -49,6 +49,37 @@ README as an honest note, and "why is it slow the first time" is a question wort
 - [ ] Budget alert configured
 - [ ] Cold start measured and recorded in `docs/SESSION-LOG.md`
 
+## Added 2026-08-31 — folded in from the agent-layer rework
+
+**Model routing.** Today one `Llm:Model` serves all three model call types. The pipeline makes three
+calls of very different difficulty: Extract (messy text → JSON, no tools), Resolve (autonomous, tool
+loop, ambiguity), Narrate (one sentence from computed numbers). Add:
+
+- Per-stage model config — Extract and Narrate on a cheap, high-quota model
+  (`gemini-3.5-flash-lite`, ~500/day), Resolve on the capable one (`gemini-3.6-flash`, ~20/day).
+  That moves two of three calls per run off the scarce bucket.
+- A **per-run provider fallback**: if the first call of a run is rate-limited, run the whole run on
+  the fallback model, and put which model answered into the trace so it is visible.
+- **No user-facing model selector** — that is a settings control and CLAUDE.md forbids those. The
+  routing is deterministic config.
+
+Re-test first: `gemini-3.5-flash-lite` was rejected in an earlier session for "poor judgement", but
+it was judged while being handed 342 candidates by the old retrieval code. Run the worked example
+against it now that retrieval is fixed before committing to it as the Extract/Narrate model.
+
+**Sign-in screen.** Before the URL is public it needs work — it is one sentence, predates the design
+system, and swallows the Google widget's own failures (`onError={() => undefined}`) with no in-flight
+state. Give it the dense operator-tool visual language the rest of the app uses and a short framing
+line: what the demo is, that a personal Google account is fine, and the cold-start note. One card,
+not a landing page.
+
+**OAuth origins.** Add the production Static Web Apps URL to the Google OAuth client's authorized
+JavaScript origins alongside `http://localhost:8080`, or sign-in fails outright in production.
+
+**Rate limiting** (already an acceptance criterion above, deferred here from task 07) is still
+unbuilt — no `AddRateLimiter` anywhere in `src/QuoteDesk.Api`. Per-IP and per-token limits plus a
+hard daily cap on the public demo.
+
 ## Out of scope
 
 Custom domain, CDN tuning, autoscaling rules, load testing, blue/green. The README is task 11.

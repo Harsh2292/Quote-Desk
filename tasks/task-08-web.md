@@ -99,3 +99,32 @@ plain error with a retry, not the replay picker. Matching the spec's intent (rep
 provider failure) is a small follow-up. Desk's post-refresh approval flow resolves the `AgentRun.Id`
 by scanning `GET /api/approvals`; if that list is large this is wasteful, but it is bounded by the
 number of pending approvals.
+
+---
+
+**Amended 2026-08-31 — agent-layer rework + audit.**
+
+**Added:** the Desk keeps its state. A `DeskSessionProvider` mounted above the router holds the
+enquiry text, the live `useAgentStream` instance, and the decision state, so navigating to Approvals
+and back no longer destroys the run; it survives a browser refresh via `sessionStorage` (400 KB cap,
+drops the trace before overflowing). New controls: **New enquiry**, **Retry** (re-process the same
+enquiry), **Edit & re-run** (change the text, run it as a new enquiry). Nothing clears except New
+enquiry or a completed approve. The Desk tab links back to the run in progress.
+
+**Gaps found by the 2026-08-31 audit, recorded not fixed — work for the post-09 review pass:**
+
+- The sign-in screen (`src/QuoteDesk.Web/src/auth/SignInScreen.tsx`) is one sentence, predates the
+  design system, swallows the Google widget's own failures (`onError={() => undefined}`), and shows
+  no in-flight state during the `POST /api/auth/google` call. Polish folded into task 09 (it is the
+  first thing a recruiter sees on the live URL).
+- `budget_exceeded` and `internal` errors render as a plain trace-panel error — only a transport
+  `429` gets the recorded-run replay picker, which was built for exactly this case.
+- A `401` on a **streaming** call (`process` / `decide`) does not clear the token or flip the app to
+  signed-out the way a `401` on a normal `apiFetch` call does — it surfaces as `internal` and leaves
+  a dead screen while the user is nominally still signed in. `openAgentStream` needs the same
+  `setToken(null)` + `onUnauthorized()` path `apiFetch` has.
+- A deep-linked enquiry that `404`s shows "Loading enquiry…" forever — the `AsyncBoundary` in
+  `DeskScreen` only wraps the pending-approval block, not the enquiry pane.
+- The final pipeline stage (`price`) never shows a duration: the browser derives stage duration from
+  the next stage's start time and there is no stage after `price`. A real fix is per-stage timing
+  emitted server-side — that is task 11's per-stage-token/duration work.

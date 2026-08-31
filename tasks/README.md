@@ -20,11 +20,20 @@ and the status update happen automatically as part of finishing a task.
 | 06 | [Agents and workflow](task-06-agents-workflow.md) | 2 | done |
 | 07 | [API, streaming, auth, logging](task-07-api.md) | 2 | done |
 | 08 | [React screens](task-08-web.md) | 2 | done |
+| — | Agent-layer rework (retrieval, structured output, ceilings) — see docs/SESSION-LOG.md 2026-08-31 | 2 | done |
 | 09 | [**Deploy — Docker, CI, live URL**](task-09-deploy.md) | 2 | todo |
+| — | Code review + security review + codebase walkthrough (Harsh reads the whole deployed system) | 2 | todo |
 | 10 | [Email and WhatsApp channels](task-10-channels.md) | 3 | todo |
 | 11 | [Observability, evals, README, demo](task-11-observability-docs.md) | 3 | todo |
 
 Status values: `todo` · `in progress` · `done` · `blocked`
+
+**Tasks 09–11 were re-scoped on 2026-08-31** to absorb the agent-layer rework and the gaps a full
+audit turned up — model routing and the sign-in-screen polish moved into task 09; the eval golden
+set, prompt-injection test, per-stage token counts and OpenTelemetry are spelled out in task 11's
+"Expanded" section. The small correctness bugs the audit found (a streaming-`401` hole, a
+deep-link-`404` infinite load, a swallowed Google `onError`) are recorded in task 08's notes and
+belong to the review pass between 09 and 10, not to a numbered task.
 
 ## Why deploy is task 09 and not last
 

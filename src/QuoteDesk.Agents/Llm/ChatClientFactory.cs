@@ -11,8 +11,9 @@ namespace QuoteDesk.Agents.Llm;
 /// docs/SPEC.md §4's `thought_signature` correction was resolved: Gemini's OpenAI-compatibility
 /// endpoint silently drops the `thought_signature` a multi-turn tool call needs, so the "gemini"
 /// profile now goes through Google's own native SDK (<c>Google.GenAI</c>) instead, which round-trips
-/// it correctly (confirmed live — see <c>tests/QuoteDesk.Evals/GoogleGenAiSpike.cs</c>, and
-/// <c>GeminiWorkedExampleEval.cs</c> for the full-pipeline proof). "github" is unaffected — a real
+/// it correctly (confirmed live during the task-07 debugging session; see
+/// <c>tests/QuoteDesk.Evals/GeminiWorkedExampleEval.cs</c> for the full-pipeline proof).
+/// "github" is unaffected — a real
 /// OpenAI endpoint, no `thought_signature` involved — and keeps the original OpenAI-compatible path.
 /// </summary>
 public static class ChatClientFactory

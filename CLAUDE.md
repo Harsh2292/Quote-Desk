@@ -99,6 +99,10 @@ parsing including malformed and empty payloads. Everything else is covered at in
   useful message with the "replay a saved run" action — a recruiter on the live demo will hit it.
 - **No `any`.** TypeScript strict stays on.
 - **Three screens only**: Desk, Approvals, Quotes. No landing page, settings or theme toggle.
+- **The Desk keeps its state.** A session provider above the router holds the enquiry text, the live
+  trace and any error, so navigating to Approvals and back does not throw the run away; it survives a
+  browser refresh via `sessionStorage`. It clears only on **New enquiry** or a pipeline that
+  completes through an approve — never on navigation, a failed run, or a rejected decision.
 - **The Agent Trace panel is the product.** Stage badge, a plain-language label for each step (never
   the raw tool name — those are internal; `src/api/traceLabels.ts` maps them), the step's arguments
   and result, duration, ok/fail, collapsible. Give it real attention.
