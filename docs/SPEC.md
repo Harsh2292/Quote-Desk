@@ -457,6 +457,33 @@ type AgentEvent =
   contract every integration test relies on, which is bigger than task 07's own scope of wiring the
   existing pipeline behind HTTP.
 
+**Resolved in task 08 (the React screens):**
+
+- **The trace panel shows a plain-language label for each step, never the raw tool or stage name.**
+  Harsh's call during the design review — `resolve_customer` etc. are internal identifiers, not
+  something a salesperson should see. `src/api/traceLabels.ts` maps the name from the `AgentEvent`
+  to a human label ("Matched customer", "Searched catalogue", …); an unmapped name degrades to a
+  de-underscored, title-cased form. The step's argument payload and result are still shown on
+  expand. This supersedes the "tool name" wording in the `AgentEvent` description above and in
+  CLAUDE.md.
+- **The approval UI is approve / reject only, and resolves no ambiguous lines.** `edit` was already
+  400 from task 07; task 08 confirmed there is no sensible dropdown to build either, because
+  `UnresolvedLine` carries only `{originalDescription, quantity, reason}` — no SKU candidates. The
+  card shows unresolved lines in red with the agent's reason and blocks nothing else; the quote
+  simply cannot be sent until a human deals with them. The deferred shape, when a later task wants
+  real line resolution: `UnresolvedLine.Candidates[]` (Resolve already computes them and throws them
+  away) plus `ApprovalDecisionRequest.LineSelections[{originalDescription, sku}]`, re-priced through
+  `PricingTools` before the draft is created.
+- **`useAgentStream` is the one SSE reader**, `fetch` + `ReadableStream` (POST + bearer header rule
+  out `EventSource`). It checks `Content-Type` before parsing because `/api/approvals/{id}` answers a
+  rejected decision with JSON ProblemDetails, not a stream. No client reconnect — the server writes
+  no `id:` lines — so recovery is a fresh `GET /api/enquiries/{id}` for the stored trace.
+- **`provider_rate_limited` offers three runs recorded by hand as typed `AgentEvent[]`**
+  (`src/QuoteDesk.Web/src/fixtures/*.ts`), not captured from a live model — deterministic and free
+  of the daily quota. Only a `429` on the stream fetch triggers the replay picker; a run that
+  exhausts the token budget instead surfaces `budget_exceeded` and renders as a plain error with a
+  retry. Widening the picker to any provider failure is a small follow-up.
+
 ## 9. Non-goals — refuse these
 
 Multi-tenancy · user registration · vector DB · real email or WhatsApp *sending* (render the PDF, log

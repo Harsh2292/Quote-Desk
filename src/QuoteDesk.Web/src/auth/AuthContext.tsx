@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { apiFetch, setToken } from '../api/client'
+import { apiFetch, setToken, setUnauthorizedHandler } from '../api/client'
 
 export type UserRole = 'admin' | 'sales'
 
@@ -57,6 +57,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
+  }, [])
+
+  // Any request that comes back 401 clears the token in `apiFetch`; this flips the whole UI to
+  // signed-out at the same moment, rather than leaving a dead screen until the next reload.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setUser(null)
+      setStatus('signedOut')
+    })
+    return () => setUnauthorizedHandler(null)
   }, [])
 
   const signIn = useCallback(async (googleCredential: string) => {

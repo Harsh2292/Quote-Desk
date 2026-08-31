@@ -1,0 +1,116 @@
+import type { AgentEvent } from '../api/agentEvents'
+
+/** A recorded run where every line resolves cleanly and nothing needs a human judgement but the sign-off. */
+export const cleanRun: AgentEvent[] = [
+  { type: 'stage', stage: 'extract', at: '2026-08-31T10:12:00.000+05:30' },
+  { type: 'stage', stage: 'resolve', at: '2026-08-31T10:12:01.200+05:30' },
+  {
+    type: 'tool_start',
+    name: 'resolve_customer',
+    args: { companyName: 'Ramdev Mills', senderId: 'purchase@ramdevmills.in' },
+    at: '2026-08-31T10:12:01.210+05:30',
+  },
+  {
+    type: 'tool_end',
+    name: 'resolve_customer',
+    ms: 300,
+    ok: true,
+    result: { customerId: 9, name: 'Ramdev Mills', tier: 'A', creditDays: 30, matchedOn: 'email_domain' },
+  },
+  {
+    type: 'tool_start',
+    name: 'search_catalog',
+    args: {
+      queries: [
+        { query: '6205 ZZ bearing', hints: [] },
+        { query: 'spindle tape 8mm', hints: [] },
+        { query: 'spur gear 32 teeth', hints: [] },
+      ],
+    },
+    at: '2026-08-31T10:12:01.700+05:30',
+  },
+  {
+    type: 'tool_end',
+    name: 'search_catalog',
+    ms: 890,
+    ok: true,
+    result: [
+      { query: '6205 ZZ bearing', outcome: 'resolved', resolvedSku: 'BRG-6205-ZZ', candidates: [], reason: 'Exact match.' },
+      { query: 'spindle tape 8mm', outcome: 'resolved', resolvedSku: 'SPT-TAPE-08', candidates: [], reason: 'Width stated explicitly.' },
+      { query: 'spur gear 32 teeth', outcome: 'resolved', resolvedSku: 'GEAR-SPUR-32', candidates: [], reason: 'Tooth count stated explicitly.' },
+    ],
+  },
+  {
+    type: 'tool_start',
+    name: 'check_stock',
+    args: { sku: 'BRG-6205-ZZ', qty: 120 },
+    at: '2026-08-31T10:12:02.700+05:30',
+  },
+  {
+    type: 'tool_end',
+    name: 'check_stock',
+    ms: 260,
+    ok: true,
+    result: { sku: 'BRG-6205-ZZ', onHand: 640, leadTimeDays: 7, dispatchDate: '2026-09-01', shortBy: 0 },
+  },
+  { type: 'stage', stage: 'price', at: '2026-08-31T10:12:03.100+05:30' },
+  {
+    type: 'approval_required',
+    approvalId: 'replay-clean-run',
+    action: 'approve_quote',
+    payload: {
+      enquiryId: 7,
+      customerId: 9,
+      customerName: 'Ramdev Mills',
+      pricedQuote: {
+        customerId: 9,
+        lines: [
+          {
+            sku: 'BRG-6205-ZZ',
+            quantity: 120,
+            listPrice: 255.0,
+            discountPct: 7,
+            netUnitPrice: 237.5,
+            lineTotal: 28500.0,
+            requiresOverride: false,
+            dispatchDate: '2026-09-01',
+            deliveryDate: '2026-09-04',
+          },
+          {
+            sku: 'SPT-TAPE-08',
+            quantity: 60,
+            listPrice: 158.34,
+            discountPct: 4,
+            netUnitPrice: 152.0,
+            lineTotal: 9120.0,
+            requiresOverride: false,
+            dispatchDate: '2026-09-01',
+            deliveryDate: '2026-09-04',
+          },
+          {
+            sku: 'GEAR-SPUR-32',
+            quantity: 8,
+            listPrice: 812.5,
+            discountPct: 4,
+            netUnitPrice: 780.0,
+            lineTotal: 6240.0,
+            requiresOverride: false,
+            dispatchDate: '2026-09-01',
+            deliveryDate: '2026-09-04',
+          },
+        ],
+        subtotal: 43860.0,
+        freight: 0.0,
+        tax: 7894.8,
+        grandTotal: 51754.8,
+        validUntil: '2026-09-21T00:00:00+05:30',
+        warnings: [],
+      },
+      unresolved: [],
+      narration:
+        'Ramdev Mills matched on their email domain — Tier A, 30-day credit. All three lines matched cleanly and are in stock for next-working-day dispatch. Tier A (4%) plus the quantity slabs applied; no line needs an override.',
+      shipTo: 'Pandesara unit',
+      requiredBy: null,
+    },
+  },
+]

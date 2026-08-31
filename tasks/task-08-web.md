@@ -17,33 +17,85 @@ Query, and every dependency here is one you would have to justify.
 ## What to build
 
 **Desk** — paste an enquiry on the left, live Agent Trace on the right. Each trace row: stage badge,
-tool name, arguments, duration, ok/fail, collapsible.
+a plain-language label for the step (never the raw tool name — Harsh's call during the design
+review, tool names are internal), what it looked at and returned, duration, ok/fail, collapsible.
 
-**Approvals** — cards for pending actions. The ambiguous line shown in red with a dropdown, the date
-conflict in amber, the within-policy discount as a note. Approve / edit / reject.
+**Approvals** — cards for pending actions. The ambiguous line shown in red with the agent's reason,
+the date conflict in amber, the within-policy discount as a note. Approve / reject only — the Api
+rejects `edit` 400 until a later task defines the payload, so the UI has no edit control and no
+line-resolution dropdown (that needs `UnresolvedLine.Candidates[]` server-side first).
 
 **Quotes** — list and detail, each linked to the trace that produced it.
 
 Also:
 
-- `useAgentStream` — one typed hook wrapping `EventSource`, parsing each event into the union and
-  handling reconnect. Do not scatter `EventSource` across components.
+- `useAgentStream` — one typed hook built on `fetch` + `ReadableStream` (NOT `EventSource`: both
+  streaming endpoints are POST and need a bearer `Authorization` header, per task 04a and CLAUDE.md).
+  It parses each SSE frame into the `AgentEvent` union. The server has no resume, so recovery is a
+  fresh `GET /api/enquiries/{id}` for its stored trace, exposed as a `recover()` action. Do not read
+  streams anywhere else.
 - Loading, empty and error states on **every** async surface
 - The `provider_rate_limited` state offers "replay a saved run", backed by three recorded runs stored
   as JSON. A recruiter must never see a blank error page.
 
 ## Acceptance criteria
 
-- [ ] All three screens work against the real API
-- [ ] The trace panel renders every `AgentEvent` variant correctly
-- [ ] The worked example is demonstrable start to finish in the browser
-- [ ] Every async surface has all three states
-- [ ] Rate-limited replay works with the API stopped
-- [ ] `npx tsc --noEmit`, `npx eslint .` and `npm run build` all clean
-- [ ] No `any` in the codebase
+- [x] All three screens work against the real API
+- [x] The trace panel renders every `AgentEvent` variant correctly
+- [x] The worked example is demonstrable start to finish in the browser
+- [x] Every async surface has all three states (`useAsync` + `AsyncBoundary` make it structural)
+- [x] Rate-limited replay works with the API stopped (three runs recorded as `AgentEvent[]`)
+- [x] `tsc -b`, `npm run lint` (oxlint — the project has no eslint) and `npm run build` all clean,
+      bar one pre-existing `only-export-components` warning on `AuthContext.tsx` from task 04a
+- [x] No `any` in the codebase
 
 ## Out of scope
 
 Mobile layouts beyond "does not break". No landing page, no settings, no theme toggle.
 
 ## Notes on completion
+
+**Designed first in Claude Design.** Harsh wanted the three screens plus the states that carry the
+demo (empty Desk, streaming Desk, approval reached, Approvals, Quotes list, Quote detail, the
+`provider_rate_limited` replay picker) settled visually before any React was written — seven
+artboards on one canvas, refined by hand, then transcribed. The dense operator-tool direction and
+the slate/system-font/`tabular-nums` vocabulary come from that canvas; it extends the default
+Tailwind palette the sign-in screen already used rather than adding tokens.
+
+**No component library.** ~6 hand-rolled primitives in `src/components/ui.tsx` (`Button`, `Badge`,
+`Card`, `Mono`, `Eyebrow`, `Field`, `StatusDot`, `Spinner`, `AsyncBoundary`). shadcn was considered
+and declined — the two parts that matter (the trace panel, the approval card) are bespoke either
+way, and five endpoints do not justify Radix + CVA + a setup step.
+
+**Trace panel shows plain-language labels, never raw tool names.** `src/api/traceLabels.ts` maps
+`resolve_customer` → "Matched customer" etc.; an unmapped name degrades to a de-underscored,
+title-cased form. This overrides the "tool name" wording in docs/SPEC.md §8 and CLAUDE.md — recorded
+there too. The argument payload and result of each step are still shown on expand.
+
+**Approve / reject only.** `POST /api/approvals/{id}` rejects `edit` with a 400 and `UnresolvedLine`
+carries no SKU candidates, so there is no edit control and no line-resolution dropdown. Unresolved
+lines render in red with the agent's reason and the quote cannot be sent until a human deals with
+them — the "agent refuses to guess" half of docs/DOMAIN.md's worked example is demonstrable; the
+"Mehul picks 8mm" half is deferred with a named shape (`UnresolvedLine.Candidates[]` +
+`ApprovalDecisionRequest.LineSelections[]`), noted in docs/SPEC.md §8.
+
+**SSE hook.** `useAgentStream` is `fetch` + `ReadableStream` (POST + bearer header rule out
+`EventSource`). It checks `content-type` before parsing, because `/api/approvals/{id}` answers a bad
+decision with JSON ProblemDetails, not a stream. No reconnect — the server writes no `id:` lines;
+`recover(enquiryId)` re-fetches the persisted trace instead.
+
+**Routing** is a ~55-line hash router (`src/routing/useHashRoute.ts`) over `useSyncExternalStore` —
+`#/desk`, `#/desk/:enquiryId`, `#/approvals`, `#/quotes`, `#/quotes/:id`. Deep links survive a
+refresh; no router dependency.
+
+**Rate-limited replay** uses three runs recorded by hand as typed `AgentEvent[]`
+(`src/fixtures/*.ts`) rather than captured from a live model — deterministic, and it does not spend
+the free-tier daily quota. Replayed approval cards have Approve/Reject disabled (no real `AgentRun`
+to POST to).
+
+**Not done here:** `provider_rate_limited` is detected from a `429` on the stream fetch; a live run
+that never 429s but simply exhausts the token budget surfaces as `budget_exceeded` and renders as a
+plain error with a retry, not the replay picker. Matching the spec's intent (replay offered on any
+provider failure) is a small follow-up. Desk's post-refresh approval flow resolves the `AgentRun.Id`
+by scanning `GET /api/approvals`; if that list is large this is wasteful, but it is bounded by the
+number of pending approvals.

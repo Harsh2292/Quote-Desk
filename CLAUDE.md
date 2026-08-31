@@ -99,8 +99,9 @@ parsing including malformed and empty payloads. Everything else is covered at in
   useful message with the "replay a saved run" action — a recruiter on the live demo will hit it.
 - **No `any`.** TypeScript strict stays on.
 - **Three screens only**: Desk, Approvals, Quotes. No landing page, settings or theme toggle.
-- **The Agent Trace panel is the product.** Stage badge, tool name, arguments, duration, ok/fail,
-  collapsible. Give it real attention.
+- **The Agent Trace panel is the product.** Stage badge, a plain-language label for each step (never
+  the raw tool name — those are internal; `src/api/traceLabels.ts` maps them), the step's arguments
+  and result, duration, ok/fail, collapsible. Give it real attention.
 
 ## Security
 

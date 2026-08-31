@@ -564,3 +564,38 @@ three eval files) is staged but not committed** — nothing lost, ready whenever
 message.
 
 **Next:** Task 08 — React screens (Desk, Approvals, Quotes), starting fresh next session.
+
+## 2026-08-31 — Task 08: React screens
+
+**Done:** The three screens exist and build. Desk: paste an enquiry, it POSTs to `/api/enquiries`
+then streams `/process` into a live Agent Trace panel; on the approval gate an `ApprovalCard`
+renders below and Approve/Reject streams `/approvals/{id}`. Approvals: lists pending cards, decide
+in place. Quotes: list + detail, detail replays the stored trace beside the quote. `provider_rate_limited`
+swaps the trace for a replay picker backed by three hand-written `AgentEvent[]` fixtures — works with
+the API stopped. Hash routing (`#/desk/:id`, `#/quotes/:id`) survives refresh. `tsc -b`, `npm run lint`
+(oxlint), `npm run build` all clean; `dotnet build -warnaserror` clean; 118 unit tests pass.
+
+**Files that matter:** `src/QuoteDesk.Web/src/hooks/useAgentStream.ts` (the only SSE reader — fetch +
+ReadableStream), `src/components/TracePanel.tsx` and `ApprovalCard.tsx` (the two bespoke pieces),
+`src/api/types.ts` (TS mirrors of the C# records), `src/api/traceLabels.ts` (tool-name → human label).
+
+**Decisions made:** Designed the 7 artboards in Claude Design first, then transcribed — canvas at
+https://claude.ai/code/artifact/e9d0ad5e-3227-4514-b1c9-e3347cae2231. No component library
+(hand-rolled ~8 primitives in `components/ui.tsx`); shadcn considered, declined. Trace panel shows
+plain-language labels, never raw tool names — Harsh's call, now in SPEC §8 + CLAUDE.md +
+memory `ui-hides-internal-identifiers`. Approve/reject only, no ambiguous-line dropdown (needs
+`UnresolvedLine.Candidates[]` server-side — deferred shape written into SPEC §8).
+
+**Known gaps:** Integration tests (40) were NOT run — Docker Desktop is down so SQL Server is
+unavailable; changes are TS-only so no C# regression, but this needs re-running with `docker compose up -d`.
+No live end-to-end smoke test for the same reason — SSE parsing and the post-refresh approval-id
+resolution (scans `GET /api/approvals`) are unverified against the real API. Only a `429` triggers the
+replay picker; `budget_exceeded` renders as a plain error. `provider_rate_limited` replay cards have
+Approve/Reject disabled (no real `AgentRun` id). Pre-existing `only-export-components` oxlint warning
+on `AuthContext.tsx` left as-is.
+
+**Blocked on Harsh:** Nothing. Start Docker Desktop next session so the full test suite and a live
+demo run can happen.
+
+**Next:** Task 09 — deploy (Docker, CI, live URL). First get a clean local end-to-end run with Docker
+up to confirm task 08 works against the real API before deploying it.
