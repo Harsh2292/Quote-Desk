@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ApprovalRequest, PricedQuoteLine } from '../api/types'
-import { money, shortDate } from '../lib/format'
+import { money, percent, shortDate } from '../lib/format'
 import { cn } from '../lib/cn'
 import { Badge, Button, Card, Eyebrow, Mono, Spinner, StatusDot } from './ui'
 
@@ -131,7 +131,7 @@ export function ApprovalCard({
                   <Mono>{money(line.listPrice)}</Mono>
                 </td>
                 <td className="py-2.5 pr-3 text-right">
-                  <Mono>{line.discountPct}%</Mono>
+                  <Mono>{percent(line.discountPct)}</Mono>
                 </td>
                 <td className="py-2.5 pr-3 text-right">
                   <Mono>{money(line.netUnitPrice)}</Mono>

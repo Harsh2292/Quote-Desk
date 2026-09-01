@@ -66,7 +66,7 @@ export const unknownSenderRun: AgentEvent[] = [
             sku: 'BRG-6203-2RS',
             quantity: 50,
             listPrice: 190.0,
-            discountPct: 3,
+            discountPct: 0.03,
             netUnitPrice: 184.3,
             lineTotal: 9215.0,
             requiresOverride: false,

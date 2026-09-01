@@ -26,6 +26,7 @@ interface StageItem {
   stage: string
   at: string
   endsAt: string | null
+  model?: string | null
 }
 
 type TraceItem =
@@ -33,7 +34,7 @@ type TraceItem =
   | ToolItem
   | { kind: 'approval'; key: number }
   | { kind: 'error'; key: number; code: string; message: string }
-  | { kind: 'done'; key: number; promptTokens: number; completionTokens: number }
+  | { kind: 'done'; key: number; promptTokens: number; completionTokens: number; totalMs: number | null }
 
 interface BuiltTrace {
   items: TraceItem[]
@@ -48,7 +49,14 @@ function buildTrace(events: AgentEvent[]): BuiltTrace {
   events.forEach((event, index) => {
     switch (event.type) {
       case 'stage': {
-        items.push({ kind: 'stage', key: index, stage: event.stage, at: event.at, endsAt: null })
+        items.push({
+          kind: 'stage',
+          key: index,
+          stage: event.stage,
+          at: event.at,
+          endsAt: null,
+          model: event.model,
+        })
         break
       }
       case 'tool_start': {
@@ -83,6 +91,7 @@ function buildTrace(events: AgentEvent[]): BuiltTrace {
           key: index,
           promptTokens: event.usage.promptTokens,
           completionTokens: event.usage.completionTokens,
+          totalMs: null, // filled in below, once every stage's `at` is known
         })
         break
       }
@@ -94,6 +103,18 @@ function buildTrace(events: AgentEvent[]): BuiltTrace {
   stages.forEach((stage, i) => {
     stage.endsAt = stages[i + 1]?.at ?? null
   })
+
+  // Total run duration: first stage's start to the done event's own timestamp — per-stage durations
+  // already existed, this is the one summary number that was missing. `done.at` is optional (added
+  // after StageEvent.model, same reasoning) so an older persisted trace with no `at` just omits this.
+  const doneEvent = events.find((e) => e.type === 'done')
+  const doneItem = items.find((i): i is Extract<TraceItem, { kind: 'done' }> => i.kind === 'done')
+  if (doneEvent?.type === 'done' && doneEvent.at && stages[0] && doneItem) {
+    const ms = new Date(doneEvent.at).getTime() - new Date(stages[0].at).getTime()
+    if (ms >= 0 && Number.isFinite(ms)) {
+      doneItem.totalMs = ms
+    }
+  }
 
   return { items, narration }
 }
@@ -247,6 +268,9 @@ export function TracePanel({
                     <span className="text-[12px] font-medium text-slate-600">
                       {stageLabel(item.stage)}
                     </span>
+                    {item.model && (
+                      <span className="font-mono text-[10.5px] text-slate-400">{item.model}</span>
+                    )}
                     <span className="flex-1" />
                     {dur && (
                       <span className="font-mono text-[11.5px] tabular-nums text-slate-500">
@@ -287,8 +311,8 @@ export function TracePanel({
                     key={item.key}
                     className="px-5 py-2.5 font-mono text-[11px] tabular-nums text-slate-400"
                   >
-                    done · {item.promptTokens.toLocaleString()} in ·{' '}
-                    {item.completionTokens.toLocaleString()} out
+                    done{item.totalMs !== null && ` · ${duration(item.totalMs)}`} ·{' '}
+                    {item.promptTokens.toLocaleString()} in · {item.completionTokens.toLocaleString()} out
                   </div>
                 )
             }

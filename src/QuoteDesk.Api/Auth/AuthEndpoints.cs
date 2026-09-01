@@ -26,8 +26,10 @@ public static class AuthEndpoints
         var group = app.MapGroup("/api/auth");
 
         // The only anonymous route below the fallback "require authenticated user" policy — signing
-        // in is how you get the token the policy demands everywhere else.
-        group.MapPost("/google", SignInWithGoogleAsync).AllowAnonymous();
+        // in is how you get the token the policy demands everywhere else. "auth" is a stricter limit
+        // stacked on top of the app-wide GlobalLimiter (Program.cs): each call costs a real Google
+        // token verification, and this is the entire surface an unauthenticated caller can reach.
+        group.MapPost("/google", SignInWithGoogleAsync).AllowAnonymous().RequireRateLimiting("auth");
 
         group.MapGet("/me", GetCurrentUserAsync);
 

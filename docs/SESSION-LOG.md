@@ -760,3 +760,159 @@ it stopped — there is no checkpoint-resume for a mid-pipeline failure, only re
 3. Then task 09 (deploy), then task 10 (channels).
 
 **Git:** unchanged from the entry above — `main` = `development` = `57e5842`, neither pushed.
+
+## 2026-09-01 — Task 09a: deployable (model routing, rate limiting, container, CI)
+
+**Done:** Extract/Narrate on `gemini-3.5-flash-lite`, Resolve on `gemini-3.6-flash`
+(`ChatClientRegistry` — two independent RPM buckets, the real fix for 08-31's run-ending 429). Rate
+limiting live (`GlobalLimiter` on every route by default, `auth`/`pipeline` stacked stricter on the
+two routes that need them). Sign-in screen rebuilt; a 5-sample enquiry picker replaced the bare
+worked-example link, each verified against the live seeded DB. `Dockerfile` + compose `api` service —
+built, runs as uid 1654, migrates+seeds+answers health checks, verified live. CI workflow written
+(build Debug+Release → test → image). 177 tests green, `npm run build`/`lint` clean.
+
+**Files that matter:** `ChatClientRegistry.cs`, `src/QuoteDesk.Api/RateLimiting/`, `Dockerfile`,
+`tasks/task-09a-deployable.md`.
+
+**Decisions made:** Task 09 split into 09a/09b. Deploy first, review after — reverses the prior
+entry's plan, Harsh's explicit call. `/approvals/{id}` carries no rate-limit policy — `ApproveExecutor`
+makes no model call. Compose's `api` binds host port 5080 (8080 is Vite's).
+
+**Known gaps:** `dotnet build` (Debug) never triggers CA1848; only `dotnet publish -c Release` does,
+and nothing had published Release before this task's Dockerfile — fixed (3 sites), and CLAUDE.md's
+Commands now list Release too. `global.json` pins 10.0.400; the Docker base image floats on `10.0` —
+accepted trade-off.
+
+**Blocked on Harsh:** one live worked-example run through `docker compose up -d` (needs his Google
+sign-in and his Gemini quota) and a pushed branch to confirm CI actually goes green.
+
+**Update, same session:** Harsh created `.env` himself (my own Write to that path is hard-blocked at
+two independent layers — a settings.json deny rule, and the auto-mode classifier refusing even to
+edit that rule — both correctly held). With it in place, `docker compose up -d --build` was run for
+real: `sql` healthy, `api` built and started, migrated, seeded, uid 1654, both health checks 200. The
+compose path is now genuinely verified, not just `docker run` against the same network. Only the
+Google-sign-in-gated run and the CI push remain, both still his.
+
+**Harsh drove the first genuinely live run** — enquiry #3003 through the containerised API, real Google
+sign-in, real Gemini calls. **52.68s total** (server-measured): Extract 1.69s, Resolve 49.59s (~13.7s
+thinking before the first tool call, ~35.8s on the second turn), Narrate ~1.4s. No 429 — the
+model-routing fix holds under a real run. Approve → quote: 330ms, no model call.
+
+**Three real bugs found and fixed from that one run, all with tests, all live in the rebuilt
+container:**
+- Narration said "$58,179.90" — every number is ₹, but `narrate.md` never named a currency.
+  One-line prompt fix.
+- Approval card showed "0.03%" instead of "3%" — `QuoteDesk.Domain` represents discounts as a
+  fraction (`MaxCombinedDiscountPct = 0.15m`), but `ApprovalCard.tsx`/`QuoteDetailScreen.tsx` both
+  rendered the raw fraction with `%` appended. Invisible until now because the hand-written replay
+  fixtures used the opposite convention (`discountPct: 7` meaning 7%), so the component looked
+  correct against fixtures and wrong against the real backend the whole time. Added `percent()` to
+  `lib/format.ts`, fixed both call sites, fixed the three fixtures to the real convention.
+- Quotes list showed a correctly-resolved customer as "Unverified sender" — `Enquiries.CustomerId` is
+  set `null` at intake (Paste never knows the customer) and **nothing in the codebase ever wrote
+  Resolve's answer back onto it** — `IEnquiryRepository` had no update method at all. Fixed:
+  `UpdateCustomerAsync`, called from `QuoteWriteTools.CreateQuoteDraftAsync` once a human approves,
+  only filling in a `null`, never overwriting a known customer. New regression test uses a freshly
+  created enquiry, not the seeded `ShreejiEnquiryId` — that already carries a customer and would hide
+  this exact regression.
+
+178 tests green (up from 177), Debug+Release build clean, `npm run build`/`lint` clean, container
+rebuilt via `docker compose up -d --build` with the fixes and confirmed healthy.
+
+**Next:** those two verifications, then task 09b (`az` CLI not installed yet — his first step), then
+the code/security review, then task 10.
+
+## 2026-09-01 (cont.) — Four more fixes from live testing, session cut short by context limit
+
+**In progress — plan file at `C:\Users\Lazy Boy\.claude\plans\ohk-lets-start-task-typed-otter.md`
+has the full design for all four; re-read it first.** Harsh drove more live runs after the three bug
+fixes above and found four more things:
+
+1. **Token usage always reported `{0,0}`** — root cause confirmed by reading the code: `DoneEvent`
+   can only be built after `Approve` runs (a separate HTTP request from Extract/Resolve/Price), and
+   each of `StartAsync`/`ResumeAsync` builds its own independent `TokenUsageTracker` — the one that
+   saw real usage is garbage by the time the real `DoneEvent` fires from the zero-spend Approve leg.
+   **DONE, backend-complete, build clean:** new migration `AddAgentRunTokenUsage` (`AgentRuns` gains
+   `PromptTokens bigint NULL`, `CompletionTokens bigint NULL`); `AgentRunRecord`,
+   `IAgentRunRepository.UpdateStatusAsync` (now takes `promptTokens`/`completionTokens`),
+   `AgentRunRepository.ToRecord`, `TokenUsageTracker`'s constructor (optional seed params),
+   `EnquiryPipeline.cs` (every `UpdateStatusAsync` call site passes the tracker's running total;
+   `ResumeAsync` seeds its tracker from the persisted total instead of zero) — all edited. Test
+   `ResumeAsync_Approved_ReportsCumulativeTokenUsageAcrossBothLegs` added to
+   `EnquiryPipelineTests.cs`. **Not yet run** — `dotnet build` is clean but `dotnet test` was not
+   executed before the session ended; run it first thing next session.
+
+2. **A failed run couldn't resume past Resolve**, even though the framework checkpoints after every
+   stage (confirmed live: the failed enquiry's one checkpoint sat unused right after Extract).
+   **DONE, backend-complete, build clean:** `EnquiryPipeline.ProcessAsync` (new — what
+   `EnquiryEndpoints.cs`'s `/process` now calls instead of `StartAsync` directly),
+   `FindResumableFailedRunAsync` (eligible only when the last `StageEvent` before a `Failed` status
+   is `"resolve"`), `ResumeFailedAsync` (reuses the *same* `AgentRun` row — resuming a checkpoint
+   keeps its original `SessionId`, which has a unique index, so a new row is impossible). Two tests
+   added: `ProcessAsync_WhenPriceFailedAfterResolveSucceeded_ResumesPastResolveInsteadOfRestarting`
+   and `ProcessAsync_WhenResolveItselfFailed_StartsFreshRatherThanResuming`. **Not yet run** — same
+   as above, build clean, tests not executed.
+
+3. **Quotes list didn't show item names** — Harsh wanted "6210 ZZ bearing, 40mm cogged v belt, ..."
+   visible, not just customer/total. **DONE.** `QuoteRepository.ListAsync` now `.Include(q => q.Lines)`
+   (was missing entirely) plus one batched `CatalogItems` name lookup for every distinct SKU across
+   the page (avoids N+1); `QuoteSummaryRecord`/`QuoteSummaryResponse`/TS `QuoteSummaryResponse` all
+   gained `ItemNames`/`itemNames`; `QuotesScreen.tsx` has a new truncating "Items" column.
+   `FakeQuoteRepository` (unit tests) updated to the new record shape too.
+
+4. **Trace panel showed per-stage duration but no run total — DONE, both halves.** `agentEvents.ts`'s
+   `done` variant gained `at?: string | null` (closes the C#/TS mismatch). `TracePanel.tsx`'s
+   `buildTrace` now computes total run duration (first `StageEvent.at` → `DoneEvent.at`) and renders
+   it on the same row as the token counts: `"done · 52.68s · N in · M out"`.
+
+**All four fixes verified this pass:** a real bug was found and fixed along the way — the eligibility
+check in fix 2 tested `lastStage == "resolve"`, but `ResolveExecutor` emits its `StageEvent` the
+moment Resolve *starts*, not completes, so that check couldn't actually distinguish "Resolve failed"
+from "Price failed after Resolve succeeded" (both show `"resolve"` last in the wrong case, or missed
+the right one). Fixed to check for `"price"` instead — only reachable once Resolve has genuinely
+finished. Also found: `EnquiryPipeline` itself never writes `AgentRuns.TraceJson` — only the API
+layer's `AgentEventStreamWriter` does, after a real HTTP request — so the two new fix-2 tests (which
+call the pipeline directly) have to persist the trace themselves via `AppendTraceAsync` between the
+two `ProcessAsync` calls, exactly mimicking what production does. **181 tests green** (129 unit + 52
+integration, up from 178), Debug+Release build clean, `npm run build`/`lint` clean.
+
+**Also fixed:** the pre-existing quote `QTN-2026-0001` (enquiry #3003) was created before today's
+`CustomerId` fix landed in the container, so it still showed "Unverified sender" — backfilled by hand
+(`UPDATE Enquiries SET CustomerId = 6 WHERE Id = 3003`), not by any code change; the fix itself only
+needed to be correct going forward.
+
+**Docker Desktop needed a restart mid-session** — its containers and image cache were wiped
+(`docker ps -a` came back completely empty, base image pulls then failed with `EOF` even though the
+host itself could reach `mcr.microsoft.com` fine) — its internal WSL2 networking was in a bad state
+after whatever caused the reset. Restarting the Docker Desktop process fixed it. If this recurs, that
+is the fix — not a real infrastructure change.
+
+**Blocked on Harsh:** nothing new. No live Gemini call was needed for any of today's four fixes — all
+provable via the stub, and all now proven.
+
+**Docs closed out, session ending here (Harsh's own weekly usage is nearly exhausted).**
+`docs/SPEC.md` updated: §6's `AgentRuns` schema row and §8's `AgentEvent` union both now show
+`PromptTokens`/`CompletionTokens`/`DoneEvent.At`, and a "Resolved 2026-09-01" block covers all four
+fixes with the same detail as this log. `tasks/task-09a-deployable.md`'s "one live run" acceptance
+criterion is now correctly checked off (Harsh did it, enquiry #3003) — only "CI green on a pushed
+branch" remains open, and that needs an actual push.
+
+**Task 10/11 order reversed, Harsh's call:** `tasks/README.md` now lists 11 (observability, evals,
+README) before 10 (email/WhatsApp channels) — the eval suite and README are the actual portfolio
+differentiators and don't need channels to exist first; channels are being saved for last on purpose.
+Task numbers and file names are unchanged, only the execution order; neither task depends on the
+other, so nothing about the swap is unsafe.
+
+**Session ends here, deliberately, before starting new work.** Harsh will test today's four fixes
+himself in the browser (the container is up and rebuilt with all of them), then push and merge
+`development` into `main` himself, per the standing rule that commits and pushes are his to run.
+
+**Next session, in order:** 1) confirm the push went through and CI is green (task 09a's last item);
+2) task 11 (observability, evals, README) — the eval golden set doesn't exist yet beyond the worked
+example, this is genuinely green-field work per the "Expanded 2026-08-31" section of
+`tasks/task-11-observability-docs.md`; 3) task 09b (Azure) whenever Harsh wants the live URL — `az`
+CLI still isn't installed on this machine; 4) task 10 (channels) last, as just decided.
+
+**Git state:** nothing committed or pushed this session (per standing rule) — everything from today
+(three bug fixes + four fixes + the 09a work before that) is staged on `development`, ready for Harsh
+to review and push himself.

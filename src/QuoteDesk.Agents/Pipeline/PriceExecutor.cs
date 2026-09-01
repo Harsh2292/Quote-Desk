@@ -12,14 +12,16 @@ namespace QuoteDesk.Agents.Pipeline;
 /// the one model call here only writes the narration sentence, and cannot change a number because it
 /// never sees them as anything but already-computed text to summarize.
 /// </summary>
-public sealed class PriceExecutor(string id, PricingTools pricingTools, AIAgent narrateAgent)
+public sealed class PriceExecutor(string id, PricingTools pricingTools, AIAgent narrateAgent, string narrateModel)
     : Executor<ResolutionResult, ApprovalRequest>(id, options: null, declareCrossRunShareable: false)
 {
     public override async ValueTask<ApprovalRequest> HandleAsync(
         ResolutionResult message, IWorkflowContext context, CancellationToken cancellationToken)
     {
+        // The pricing itself has no model in the loop at all (CLAUDE.md rule 1) — the only model
+        // call this stage makes is Narrate's closing sentence, so that is the model this event names.
         await context.AddEventAsync(
-            new AgentTraceEvent(new StageEvent { Stage = "price", At = DateTimeOffset.UtcNow }), cancellationToken);
+            new AgentTraceEvent(new StageEvent { Stage = "price", At = DateTimeOffset.UtcNow, Model = narrateModel }), cancellationToken);
 
         var lineRequests = message.Resolved
             .Select(r => new QuoteLineRequest { Sku = r.Sku, Quantity = r.Quantity })

@@ -116,6 +116,7 @@ public sealed record NewQuote(
 public sealed record QuoteLineRecord(
     int Id,
     string Sku,
+    string ItemName,
     int Qty,
     decimal UnitPrice,
     decimal DiscountPct,
@@ -143,7 +144,10 @@ public sealed record QuoteRecord(
     DateTimeOffset? SentAt,
     IReadOnlyList<QuoteLineRecord> Lines);
 
-/// <summary>One pipeline run of one enquiry through Extract → Resolve → Price → Approve.</summary>
+/// <summary>One pipeline run of one enquiry through Extract → Resolve → Price → Approve.
+/// <see cref="PromptTokens"/>/<see cref="CompletionTokens"/> are the cumulative usage this run has
+/// recorded so far — see <see cref="Entities.AgentRun"/>'s remarks for why this has to be persisted
+/// rather than kept only in memory.</summary>
 public sealed record AgentRunRecord(
     int Id,
     int EnquiryId,
@@ -152,7 +156,9 @@ public sealed record AgentRunRecord(
     string? ApprovalRequestJson,
     string? TraceJson,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    long? PromptTokens,
+    long? CompletionTokens);
 
 /// <summary>Everything needed to start tracking a new pipeline run.</summary>
 public sealed record NewAgentRun(int EnquiryId, string SessionId, string Status, DateTimeOffset CreatedAt);
@@ -170,7 +176,8 @@ public sealed record QuoteSummaryRecord(
     string? CustomerName,
     decimal Total,
     DateTimeOffset CreatedAt,
-    DateTimeOffset ValidUntil);
+    DateTimeOffset ValidUntil,
+    IReadOnlyList<string> ItemNames);
 
 /// <summary>One committed workflow checkpoint's identity, without its payload — enough to let
 /// QuoteDesk.Agents' bridge onto <c>ICheckpointStore&lt;JsonElement&gt;</c> pick the latest checkpoint

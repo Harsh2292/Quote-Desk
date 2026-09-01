@@ -1,0 +1,33 @@
+# Never in the image — CLAUDE.md's Security section: "Secrets never enter the repo... never in the
+# image." appsettings.Development.json/appsettings.Local.json/.env* hold real local secrets even
+# though they're gitignored; a Docker build context is not git, so it needs its own exclusion list.
+**/appsettings.Development.json
+**/appsettings.Local.json
+**/.env
+**/.env.*
+!**/.env.example
+
+# Build/tooling output — always rebuilt inside the image, never useful to copy in from the host.
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+.vs/
+.vscode/
+.git/
+.github/
+
+# Not part of the QuoteDesk.Api image at all.
+src/QuoteDesk.Web/
+tests/
+docs/
+tasks/
+.claude/
+
+# Test/tooling artifacts.
+TestResults/
+coverage/
+*.trx
+evals-report.json
+
+README.md

@@ -10,10 +10,10 @@
  * type, not assume it never arrives.
  */
 export type AgentEvent =
-  | { type: 'stage'; stage: 'extract' | 'resolve' | 'price'; at: string }
+  | { type: 'stage'; stage: 'extract' | 'resolve' | 'price'; at: string; model?: string | null }
   | { type: 'tool_start'; name: string; args: unknown; at: string }
   | { type: 'tool_end'; name: string; ms: number; ok: boolean; result: unknown }
   | { type: 'token'; text: string }
   | { type: 'approval_required'; approvalId: string; action: string; payload: unknown }
-  | { type: 'done'; usage: { promptTokens: number; completionTokens: number } }
+  | { type: 'done'; usage: { promptTokens: number; completionTokens: number }; at?: string | null }
   | { type: 'error'; code: 'provider_rate_limited' | 'budget_exceeded' | 'internal'; message: string }

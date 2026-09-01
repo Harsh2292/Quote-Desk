@@ -94,12 +94,15 @@ public class Gemini35FlashLiteWorkedExampleEval
             MaxToolCalls = 8,
             TokenBudget = 20_000,
         };
-        var chatClient = ChatClientFactory.Create(llmOptions);
+        // No ExtractModel/ResolveModel/NarrateModel set above, so every stage falls back to Model —
+        // this eval is a single-model comparison (this Lite model, end to end), not production's
+        // per-stage routing.
+        var chatClients = new ChatClientRegistry(llmOptions, model => ChatClientFactory.Create(llmOptions, model), loggerFactory: null);
         var checkpointStore = new SqlCheckpointStore(new WorkflowCheckpointRepository(new DevDbContextFactory()), timeProvider);
 
         var pipeline = new EnquiryPipeline(
             enquiries, agentRuns, readTools, pricingTools, writeTools, quotes, catalog, customers,
-            chatClient, new PromptLibrary(), llmOptions, checkpointStore, timeProvider,
+            chatClients, new PromptLibrary(), llmOptions, checkpointStore, timeProvider,
             NullLogger<EnquiryPipeline>.Instance);
 
         var events = new List<AgentEvent>();

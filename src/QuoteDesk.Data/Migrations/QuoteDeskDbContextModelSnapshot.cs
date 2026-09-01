@@ -33,11 +33,17 @@ namespace QuoteDesk.Data.Migrations
                     b.Property<string>("ApprovalRequestJson")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<long?>("CompletionTokens")
+                        .HasColumnType("bigint");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
 
                     b.Property<int>("EnquiryId")
                         .HasColumnType("int");
+
+                    b.Property<long?>("PromptTokens")
+                        .HasColumnType("bigint");
 
                     b.Property<string>("SessionId")
                         .IsRequired()

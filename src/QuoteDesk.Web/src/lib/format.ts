@@ -8,6 +8,13 @@ export function money(amount: number): string {
   )
 }
 
+/** "3%" from a fraction like 0.03 — QuoteDesk.Domain's own convention
+ * (`PricingEngine.MaxCombinedDiscountPct` is `0.15m`, not `15m`). Rounds to the nearest whole point;
+ * the slab and tier tables only ever produce multiples of one. */
+export function percent(fraction: number): string {
+  return `${Math.round(fraction * 100)}%`
+}
+
 /** "31 Aug 2026" from an ISO date or datetime string, shown in IST. Display only. */
 export function shortDate(iso: string | null | undefined): string {
   if (!iso) return '—'

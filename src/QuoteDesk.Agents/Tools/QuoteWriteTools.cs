@@ -37,6 +37,16 @@ public sealed class QuoteWriteTools(IQuoteRepository quotes, IEnquiryRepository 
             return new QuoteDraftResult { Created = false, Reason = "A quote must have at least one line." };
         }
 
+        // The enquiry is created with no customer (PasteAdapter never knows one at intake) and
+        // nothing wrote Resolve's answer back onto it until now — every screen reading
+        // Enquiries.CustomerId (the Quotes list, GET /api/enquiries/{id}) showed a resolved customer
+        // as unmatched. Never overwrites an already-known customer with a different one; only fills
+        // in what Resolve found for an enquiry that started with none.
+        if (quote.CustomerId is int resolvedCustomerId && enquiry.CustomerId is null)
+        {
+            await enquiries.UpdateCustomerAsync(enquiryId, resolvedCustomerId, cancellationToken);
+        }
+
         var now = timeProvider.GetUtcNow();
         var newQuote = new NewQuote(
             enquiryId,

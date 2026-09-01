@@ -12,7 +12,17 @@ public sealed class QuoteRepository(QuoteDeskDbContext db) : IQuoteRepository
             .Include(q => q.Lines)
             .SingleOrDefaultAsync(q => q.Id == id, cancellationToken);
 
-        return quote is null ? null : ToRecord(quote);
+        if (quote is null)
+        {
+            return null;
+        }
+
+        var skus = quote.Lines.Select(l => l.Sku).Distinct().ToList();
+        var names = await db.CatalogItems.AsNoTracking()
+            .Where(c => skus.Contains(c.Sku))
+            .ToDictionaryAsync(c => c.Sku, c => c.Name, cancellationToken);
+
+        return ToRecord(quote, names);
     }
 
     public async Task<IReadOnlyList<QuoteSummaryRecord>> ListAsync(CancellationToken cancellationToken)
@@ -20,8 +30,17 @@ public sealed class QuoteRepository(QuoteDeskDbContext db) : IQuoteRepository
         var quotes = await db.Quotes.AsNoTracking()
             .Include(q => q.Enquiry)
             .ThenInclude(e => e!.Customer)
+            .Include(q => q.Lines)
             .OrderByDescending(q => q.CreatedAt)
             .ToListAsync(cancellationToken);
+
+        // One batched lookup for every distinct SKU across the whole list, not one query per quote —
+        // Harsh wanted item names ("6210 ZZ bearing, 40mm cogged v belt, ...") visible on this screen,
+        // not just customer/total.
+        var skus = quotes.SelectMany(q => q.Lines.Select(l => l.Sku)).Distinct().ToList();
+        var names = await db.CatalogItems.AsNoTracking()
+            .Where(c => skus.Contains(c.Sku))
+            .ToDictionaryAsync(c => c.Sku, c => c.Name, cancellationToken);
 
         return [.. quotes.Select(q => new QuoteSummaryRecord(
             q.Id,
@@ -32,7 +51,8 @@ public sealed class QuoteRepository(QuoteDeskDbContext db) : IQuoteRepository
             q.Enquiry?.Customer?.Name,
             q.Total,
             q.CreatedAt,
-            q.ValidUntil))];
+            q.ValidUntil,
+            [.. q.Lines.Select(l => names.GetValueOrDefault(l.Sku, l.Sku))]))];
     }
 
     public async Task<QuoteRecord> CreateDraftAsync(NewQuote quote, CancellationToken cancellationToken)
@@ -104,7 +124,7 @@ public sealed class QuoteRepository(QuoteDeskDbContext db) : IQuoteRepository
         return ToRecord(entity);
     }
 
-    private static QuoteRecord ToRecord(Quote q) => new(
+    private static QuoteRecord ToRecord(Quote q, IReadOnlyDictionary<string, string>? names = null) => new(
         q.Id,
         q.EnquiryId,
         q.Number,
@@ -120,5 +140,6 @@ public sealed class QuoteRepository(QuoteDeskDbContext db) : IQuoteRepository
         q.ApprovedByUserId,
         q.ApprovedAt,
         q.SentAt,
-        [.. q.Lines.Select(l => new QuoteLineRecord(l.Id, l.Sku, l.Qty, l.UnitPrice, l.DiscountPct, l.LineTotal, l.RequiresOverride, l.DispatchDate, l.DeliveryDate, l.Note))]);
+        [.. q.Lines.Select(l => new QuoteLineRecord(
+            l.Id, l.Sku, names?.GetValueOrDefault(l.Sku, l.Sku) ?? l.Sku, l.Qty, l.UnitPrice, l.DiscountPct, l.LineTotal, l.RequiresOverride, l.DispatchDate, l.DeliveryDate, l.Note))]);
 }

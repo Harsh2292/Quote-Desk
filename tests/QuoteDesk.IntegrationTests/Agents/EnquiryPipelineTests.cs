@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -8,6 +9,7 @@ using QuoteDesk.Agents.Prompts;
 using QuoteDesk.Agents.Tools;
 using QuoteDesk.Agents.Tools.Results;
 using QuoteDesk.Data;
+using QuoteDesk.Intake;
 using QuoteDesk.IntegrationTests.Data;
 
 namespace QuoteDesk.IntegrationTests.Agents;
@@ -22,6 +24,7 @@ namespace QuoteDesk.IntegrationTests.Agents;
 public class EnquiryPipelineTests(RepositoryFixture fixture)
 {
     private static readonly DateTimeOffset Now = new(2026, 3, 26, 8, 41, 0, TimeSpan.FromHours(5.5));
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private const int ShreejiEnquiryId = 1;
 
     /// <summary>A model does not follow a formatting instruction with 100% reliability. Before the
@@ -113,6 +116,149 @@ public class EnquiryPipelineTests(RepositoryFixture fixture)
         quoteNumber.Should().StartWith("QTN-2026-");
     }
 
+    /// <summary>A live run found this: <c>DoneEvent.Usage</c> always reported <c>{0, 0}</c>, regardless
+    /// of real spend — <see cref="EnquiryPipeline.StartAsync"/> and <see cref="EnquiryPipeline.ResumeAsync"/>
+    /// each build their own <c>TokenUsageTracker</c>, and the one that saw Extract/Resolve/Price's real
+    /// calls is gone (a completed HTTP request's local state) by the time the real <c>DoneEvent</c>
+    /// finally fires, in the Approve leg — which spends nothing. Fixed by persisting the running total
+    /// onto <c>AgentRuns</c> so the resumed leg's tracker starts from it instead of zero.</summary>
+    [Fact]
+    public async Task ResumeAsync_Approved_ReportsCumulativeTokenUsageAcrossBothLegs()
+    {
+        var shreeji = await fixture.Customers.FindByEmailDomainAsync("shreejitextiles.com", CancellationToken.None);
+        var stub = new StubChatClient(WorkedExampleScript.BuildWorkedExampleTurns(shreeji!.Id));
+        var pipeline = BuildPipeline(stub);
+
+        var startEvents = await CollectAsync(pipeline.StartAsync(ShreejiEnquiryId, CancellationToken.None));
+        var pricedQuote = startEvents.OfType<ApprovalRequiredEvent>().Single().Payload.Should().BeOfType<ApprovalRequest>().Subject.PricedQuote;
+
+        var decision = new ApprovalDecision
+        {
+            EnquiryId = ShreejiEnquiryId,
+            Approved = true,
+            ApprovedByUserId = await GetOrCreateApproverUserIdAsync(),
+            Quote = pricedQuote,
+        };
+        var resumeEvents = await CollectAsync(pipeline.ResumeAsync(ShreejiEnquiryId, decision, CancellationToken.None));
+
+        var done = resumeEvents.OfType<DoneEvent>().Single();
+        done.Usage.PromptTokens.Should().BeGreaterThan(0, "Extract/Resolve/Price's real spend must survive the suspend/resume boundary, not reset to zero");
+        done.Usage.CompletionTokens.Should().BeGreaterThan(0);
+    }
+
+    /// <summary>A live run found this: a brand-new enquiry (Paste's own <c>CustomerId: null</c> —
+    /// nothing resolves it until Resolve runs) stayed "Unverified sender" in the Quotes list even
+    /// after Resolve correctly matched a real customer, because nothing ever wrote that answer back
+    /// onto the enquiry row. Uses a freshly created enquiry rather than the seeded
+    /// <see cref="ShreejiEnquiryId"/>, which already carries a customer from the seeder — that would
+    /// hide a regression here, not catch one.</summary>
+    [Fact]
+    public async Task ResumeAsync_Approved_WritesTheResolvedCustomerBackOntoTheEnquiry()
+    {
+        var shreeji = await fixture.Customers.FindByEmailDomainAsync("shreejitextiles.com", CancellationToken.None);
+        var adapter = new PasteAdapter(fixture.Enquiries);
+        var incoming = PasteAdapter.FromPastedText(WorkedExampleScript.SenderId, WorkedExampleScript.Body, Now);
+        var ingested = await adapter.IngestAsync(incoming, CancellationToken.None);
+
+        var before = await fixture.Enquiries.GetByIdAsync(ingested.EnquiryId, CancellationToken.None);
+        before!.CustomerId.Should().BeNull("Paste never knows the customer at intake — only Resolve does");
+
+        var stub = new StubChatClient(WorkedExampleScript.BuildWorkedExampleTurns(shreeji!.Id));
+        var pipeline = BuildPipeline(stub);
+
+        var startEvents = await CollectAsync(pipeline.StartAsync(ingested.EnquiryId, CancellationToken.None));
+        var pricedQuote = startEvents.OfType<ApprovalRequiredEvent>().Single().Payload.Should().BeOfType<ApprovalRequest>().Subject.PricedQuote;
+
+        var decision = new ApprovalDecision
+        {
+            EnquiryId = ingested.EnquiryId,
+            Approved = true,
+            ApprovedByUserId = await GetOrCreateApproverUserIdAsync(),
+            Quote = pricedQuote,
+        };
+        await CollectAsync(pipeline.ResumeAsync(ingested.EnquiryId, decision, CancellationToken.None));
+
+        var after = await fixture.Enquiries.GetByIdAsync(ingested.EnquiryId, CancellationToken.None);
+        after!.CustomerId.Should().Be(shreeji.Id, "Resolve matched this customer, and approval is the point that answer becomes authoritative");
+    }
+
+    /// <summary>Confirmed live: the framework checkpoints after every stage, not only at the approval
+    /// gate, so a failure in Price/Narrate — after Resolve already succeeded — leaves a perfectly good
+    /// checkpoint sitting unused. <see cref="EnquiryPipeline.ProcessAsync"/> resumes from it instead of
+    /// redoing Resolve, the expensive/quota-scarce step. Proved here by scripting the second attempt
+    /// with <b>only</b> the Narrate turn — if the code incorrectly restarted from Extract, this stub
+    /// has no matching turns queued and throws immediately, failing the test loudly.</summary>
+    [Fact]
+    public async Task ProcessAsync_WhenPriceFailedAfterResolveSucceeded_ResumesPastResolveInsteadOfRestarting()
+    {
+        var shreeji = await fixture.Customers.FindByEmailDomainAsync("shreejitextiles.com", CancellationToken.None);
+        var adapter = new PasteAdapter(fixture.Enquiries);
+        var incoming = PasteAdapter.FromPastedText(WorkedExampleScript.SenderId, WorkedExampleScript.Body, Now);
+        var ingested = await adapter.IngestAsync(incoming, CancellationToken.None);
+
+        // Extract and Resolve's full turn sequence, but no Narrate turn — Price's pricing succeeds
+        // (pure code), then its one model call finds the stub exhausted and the executor fails.
+        var turns = WorkedExampleScript.BuildWorkedExampleTurns(shreeji!.Id);
+        turns.RemoveAt(turns.Count - 1);
+        var firstAttempt = await CollectAsync(BuildPipeline(new StubChatClient(turns)).ProcessAsync(ingested.EnquiryId, CancellationToken.None));
+
+        firstAttempt.Should().ContainSingle(e => e is ErrorEvent);
+        firstAttempt.OfType<StageEvent>().Last().Stage.Should().Be("price", "Resolve completed — the failure happened entering Price");
+
+        var runAfterFailure = await fixture.AgentRuns.GetLatestByEnquiryIdAsync(ingested.EnquiryId, CancellationToken.None);
+        runAfterFailure!.Status.Should().Be("failed");
+
+        // In production, AgentEventStreamWriter persists TraceJson in a finally block once a real
+        // HTTP request's stream ends — this test calls the pipeline directly, bypassing that layer,
+        // so it has to do the same write itself before FindResumableFailedRunAsync can see it.
+        await fixture.AgentRuns.AppendTraceAsync(
+            runAfterFailure.Id, JsonSerializer.Serialize(firstAttempt, JsonOptions), Now, CancellationToken.None);
+
+        var resumeStub = new StubChatClient([WorkedExampleScript.Text(
+            "Bearings and belt priced within policy; the spindle tape needs your input.")]);
+        var secondAttempt = await CollectAsync(BuildPipeline(resumeStub).ProcessAsync(ingested.EnquiryId, CancellationToken.None));
+
+        secondAttempt.OfType<ToolStartEvent>().Select(e => e.Name).Should()
+            .NotContain(["resolve_customer", "search_catalog", "get_customer_history"], "Resolve already succeeded — resuming must not repeat it");
+        secondAttempt.Should().ContainSingle(e => e is ApprovalRequiredEvent);
+
+        var runAfterResume = await fixture.AgentRuns.GetLatestByEnquiryIdAsync(ingested.EnquiryId, CancellationToken.None);
+        runAfterResume!.Id.Should().Be(runAfterFailure.Id, "resuming a checkpoint must reuse the original AgentRun row — its SessionId is unique and cannot move to a new one");
+        runAfterResume.Status.Should().Be("pending_approval");
+    }
+
+    /// <summary>The other half of the eligibility check: a failure <i>during</i> Resolve (before it
+    /// completes) leaves no "past Resolve" checkpoint to resume from, so <c>ProcessAsync</c> must fall
+    /// through to a full fresh restart — today's behaviour, unchanged.</summary>
+    [Fact]
+    public async Task ProcessAsync_WhenResolveItselfFailed_StartsFreshRatherThanResuming()
+    {
+        var shreeji = await fixture.Customers.FindByEmailDomainAsync("shreejitextiles.com", CancellationToken.None);
+        var adapter = new PasteAdapter(fixture.Enquiries);
+        var incoming = PasteAdapter.FromPastedText(WorkedExampleScript.SenderId, WorkedExampleScript.Body, Now);
+        var ingested = await adapter.IngestAsync(incoming, CancellationToken.None);
+
+        // Only Extract's turn is scripted — Resolve's first tool-calling turn finds the stub exhausted.
+        var turns = WorkedExampleScript.BuildWorkedExampleTurns(shreeji!.Id);
+        var extractOnly = turns.Take(1).ToList();
+        var firstAttempt = await CollectAsync(BuildPipeline(new StubChatClient(extractOnly)).ProcessAsync(ingested.EnquiryId, CancellationToken.None));
+
+        firstAttempt.Should().ContainSingle(e => e is ErrorEvent);
+        // Resolve announces its own StageEvent the moment it starts, not once it completes — so
+        // "resolve" is the last stage seen here even though Resolve itself is what failed. This is
+        // exactly why eligibility checks for a "price" stage instead: only that can prove Resolve
+        // actually finished.
+        firstAttempt.OfType<StageEvent>().Last().Stage.Should().Be("resolve");
+
+        // A full worked-example script — proves this genuinely restarts fresh: it needs every one of
+        // Extract's and Resolve's turns again, not just Narrate's.
+        var secondAttempt = await CollectAsync(
+            BuildPipeline(new StubChatClient(WorkedExampleScript.BuildWorkedExampleTurns(shreeji.Id))).ProcessAsync(ingested.EnquiryId, CancellationToken.None));
+
+        secondAttempt.OfType<StageEvent>().Select(e => e.Stage).Should().ContainInOrder("extract", "resolve", "price");
+        secondAttempt.Should().ContainSingle(e => e is ApprovalRequiredEvent);
+    }
+
     [Fact]
     public async Task ResumeAsync_AfterASimulatedProcessRestart_StillCreatesTheQuote()
     {
@@ -193,6 +339,10 @@ public class EnquiryPipelineTests(RepositoryFixture fixture)
         var options = new LlmOptions { Endpoint = "https://example.test/", ApiKey = "unused", Model = "stub", MaxToolCalls = 8, TokenBudget = tokenBudget };
         var checkpointStore = new SqlCheckpointStore(fixture.Checkpoints, timeProvider);
 
+        // One shared stub instance for every stage — its ordered turns assume Extract, Resolve and
+        // Narrate all draw from the same script, exactly as they did before per-stage model routing.
+        var chatClients = new ChatClientRegistry(options, _ => chatClient, loggerFactory: null);
+
         return new EnquiryPipeline(
             fixture.Enquiries,
             fixture.AgentRuns,
@@ -202,7 +352,7 @@ public class EnquiryPipelineTests(RepositoryFixture fixture)
             fixture.Quotes,
             fixture.Catalog,
             fixture.Customers,
-            chatClient,
+            chatClients,
             new PromptLibrary(),
             options,
             checkpointStore,

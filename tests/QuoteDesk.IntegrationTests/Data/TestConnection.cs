@@ -10,7 +10,13 @@ namespace QuoteDesk.IntegrationTests.Data;
 /// </summary>
 internal static class TestConnection
 {
-    private const string Base = "Server=localhost,1433;User Id=sa;Password=QuoteDesk!Local1;TrustServerCertificate=True";
+    // Falls back to docker-compose.yml's own default so local runs need no extra setup; CI (task 09)
+    // sets MSSQL_SA_PASSWORD for its SQL Server service container and passes the same value through
+    // this env var, so the two never have to be kept in sync by hand.
+    private static readonly string Password =
+        Environment.GetEnvironmentVariable("MSSQL_SA_PASSWORD") ?? "QuoteDesk!Local1";
+
+    private static string Base => $"Server=localhost,1433;User Id=sa;Password={Password};TrustServerCertificate=True";
 
     public static string For(string databaseName) => $"{Base};Database={databaseName}";
 

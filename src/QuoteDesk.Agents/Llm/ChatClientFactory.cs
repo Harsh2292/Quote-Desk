@@ -18,25 +18,38 @@ namespace QuoteDesk.Agents.Llm;
 /// </summary>
 public static class ChatClientFactory
 {
+    /// <summary>Builds a client for <see cref="LlmOptions.Model"/> — the single-model shape every
+    /// caller used before task 09's per-stage routing (the eval harnesses, and any deployment that
+    /// never sets the per-stage overrides). Equivalent to <c>Create(options, options.Model)</c>.</summary>
     public static IChatClient Create(LlmOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+        return Create(options, options.Model);
+    }
+
+    /// <summary>Builds a client for an explicit <paramref name="model"/>, independent of
+    /// <see cref="LlmOptions.Model"/> — what <see cref="ChatClientRegistry"/> calls once per distinct
+    /// model name across Extract/Resolve/Narrate.</summary>
+    public static IChatClient Create(LlmOptions options, string model)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(model);
 
         return options.Provider switch
         {
-            "github" => CreateOpenAiCompatible(options),
-            "gemini" => new Google.GenAI.Client(apiKey: options.ApiKey).AsIChatClient(options.Model),
+            "github" => CreateOpenAiCompatible(options, model),
+            "gemini" => new Google.GenAI.Client(apiKey: options.ApiKey).AsIChatClient(model),
             _ => throw new InvalidOperationException(
                 $"Unknown Llm:Provider '{options.Provider}'. Expected 'gemini' or 'github'."),
         };
     }
 
-    private static IChatClient CreateOpenAiCompatible(LlmOptions options)
+    private static IChatClient CreateOpenAiCompatible(LlmOptions options, string model)
     {
         var client = new OpenAIClient(
             new ApiKeyCredential(options.ApiKey),
             new OpenAIClientOptions { Endpoint = new Uri(options.Endpoint) });
 
-        return client.GetChatClient(options.Model).AsIChatClient();
+        return client.GetChatClient(model).AsIChatClient();
     }
 }

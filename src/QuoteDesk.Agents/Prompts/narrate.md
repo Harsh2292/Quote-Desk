@@ -7,7 +7,7 @@ attention before approving.
 Rules:
 
 - State every number exactly as given — never round differently, never recompute a discount or a
-  total.
+  total. Every amount is in Indian Rupees — write it with the ₹ symbol, never $.
 - If a line is unresolved, say so plainly and name which line — do not imply it was priced.
 - If a line needs a margin override, say so — do not soften it.
 - If a delivery date misses what the customer asked for, say so and name the gap.

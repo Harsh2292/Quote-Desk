@@ -21,7 +21,7 @@ namespace QuoteDesk.Agents.Pipeline;
 /// Token usage for both attempts is counted by <see cref="BudgetedChatClient"/>, which sits under
 /// every agent — not here.
 /// </summary>
-public static class StructuredModelCall
+public static partial class StructuredModelCall
 {
     private static readonly JsonSerializerOptions SchemaOptions = new(JsonSerializerDefaults.Web);
 
@@ -43,11 +43,7 @@ public static class StructuredModelCall
         }
         catch (Exception ex) when (useSchema && IsSchemaUnsupported(ex))
         {
-            logger.LogWarning(
-                ex,
-                "The provider rejected schema-enforced output for {Type}. Falling back to plain-text parsing for this call — "
-                + "set Llm:UseStructuredOutput to false to stop paying for the rejected attempt on every run.",
-                typeof(T).Name);
+            LogSchemaRejected(logger, ex, typeof(T).Name);
             schemaAccepted = false;
             response = await agent.RunAsync(prompt, session: null, options: null, cancellationToken);
         }
@@ -58,10 +54,7 @@ public static class StructuredModelCall
         }
         catch (Exception parseFailure) when (IsParseFailure(parseFailure))
         {
-            logger.LogWarning(
-                parseFailure,
-                "Model reply for {Type} could not be parsed. Retrying once with the error fed back.",
-                typeof(T).Name);
+            LogParseFailureRetrying(logger, parseFailure, typeof(T).Name);
 
             var corrective = $"""
                 {prompt}
@@ -109,4 +102,18 @@ public static class StructuredModelCall
             || message.Contains("json_schema", StringComparison.OrdinalIgnoreCase)
             || message.Contains("responseMimeType", StringComparison.OrdinalIgnoreCase);
     }
+
+    // Source-generated (CA1848: LoggerMessage delegates instead of the LoggerExtensions convenience
+    // methods) — a real diagnostic `dotnet build` never surfaced because CA1848 only fires under
+    // Release configuration, and nothing in this repo published Release before task 09's Dockerfile.
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The provider rejected schema-enforced output for {Type}. Falling back to plain-text parsing for this call — "
+            + "set Llm:UseStructuredOutput to false to stop paying for the rejected attempt on every run.")]
+    private static partial void LogSchemaRejected(ILogger logger, Exception exception, string type);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Model reply for {Type} could not be parsed. Retrying once with the error fed back.")]
+    private static partial void LogParseFailureRetrying(ILogger logger, Exception exception, string type);
 }

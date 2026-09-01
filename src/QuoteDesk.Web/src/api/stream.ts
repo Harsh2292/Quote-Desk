@@ -1,5 +1,5 @@
 import type { AgentEvent } from './agentEvents'
-import { getToken } from './client'
+import { apiUrl, getToken } from './client'
 
 /**
  * A non-2xx that arrived as a JSON body instead of a stream — e.g. `POST /api/approvals/{id}` with a
@@ -32,7 +32,7 @@ export async function* openAgentStream(
   if (token) headers.set('Authorization', `Bearer ${token}`)
   if (body !== undefined) headers.set('Content-Type', 'application/json')
 
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     method: 'POST',
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),

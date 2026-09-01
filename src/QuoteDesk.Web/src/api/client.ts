@@ -1,5 +1,20 @@
 const TOKEN_KEY = 'qd.auth'
 
+/**
+ * Empty in dev — the Vite proxy already makes the Api same-origin (vite.config.ts), so a
+ * root-relative path resolves correctly on its own. Static Web Apps and the Container App (task 09b)
+ * are two separate hosts, so production sets `VITE_API_BASE_URL` at build time to the Api's own
+ * origin; SSE responses cannot go through an SWA proxy route (it buffers, which breaks streaming),
+ * so this is a direct cross-origin call, not a rewrite.
+ */
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+
+/** Prefixes {@link API_BASE_URL} onto a root-relative Api path. The one place that prefix is
+ * applied — `stream.ts`'s SSE reader uses this too, since it cannot go through {@link apiFetch}. */
+export function apiUrl(path: string): string {
+  return `${API_BASE_URL}${path}`
+}
+
 /** Read directly from storage rather than through AuthContext, so apiFetch has no dependency on React. */
 export function getToken(): string | null {
   try {
@@ -68,7 +83,7 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
     headers.set('Authorization', `Bearer ${token}`)
   }
 
-  const response = await fetch(path, { ...init, headers })
+  const response = await fetch(apiUrl(path), { ...init, headers })
 
   if (response.status === 401) {
     setToken(null)

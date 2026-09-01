@@ -1,28 +1,19 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import type { ReactNode } from 'react'
 import { getEnquiry, listApprovals } from '../api/endpoints'
 import { isApprovalRequest } from '../api/types'
 import type { AgentEvent } from '../api/agentEvents'
 import type { ApprovalRequest, PendingApprovalSummary } from '../api/types'
 import { useDeskSession } from '../desk/DeskSessionContext'
+import { SAMPLE_ENQUIRIES, type SampleEnquiry } from '../desk/sampleEnquiries'
 import { useAsync } from '../hooks/useAsync'
 import { navigate, type Route } from '../routing/useHashRoute'
 import { ApprovalCard } from '../components/ApprovalCard'
 import { RateLimitedPanel } from '../components/RateLimitedPanel'
 import { TracePanel } from '../components/TracePanel'
-import { AsyncBoundary, Button, Eyebrow, Field } from '../components/ui'
+import { AsyncBoundary, Button, Card, Eyebrow, Field, Mono } from '../components/ui'
 
 type DeskRoute = Extract<Route, { name: 'desk' }>
-
-const SAMPLE_ENQUIRY = `Hi Mehul bhai,
-Need urgent quote —
-250 nos of the 6203 bearings (same as last time)
-40 mtr of the 25mm PU timing belt
-12 pcs ring frame spindle tape, the thicker one
-
-Delivery at our Sachin unit, need by 5th. Last time you gave 8% on bearings, please keep same.
-
-Kiran — Shreeji Textiles`
 
 function lastApprovalRequest(events: AgentEvent[]): {
   request: ApprovalRequest | null
@@ -71,13 +62,12 @@ export function DeskScreen({ route }: { route: DeskRoute }) {
               placeholder="Paste an enquiry — an email body, a WhatsApp message, or a customer's list…"
               className="min-h-[320px] flex-1 resize-none rounded-lg border border-slate-200 bg-slate-50 p-3.5 font-mono text-[12px] leading-relaxed text-slate-700 placeholder:text-slate-300"
             />
-            <button
-              type="button"
-              onClick={() => session.setDraftBody(SAMPLE_ENQUIRY)}
-              className="self-start text-[11.5px] text-amber-700 hover:text-amber-800"
-            >
-              Use the worked example
-            </button>
+            <SampleEnquiryPicker
+              onPick={(sample) => {
+                session.setDraftBody(sample.body)
+                session.setDraftSender(sample.sender)
+              }}
+            />
             <Field label="Sender · optional">
               <input
                 value={session.draftSender}
@@ -268,6 +258,47 @@ function traceMeta(stream: ReturnType<typeof useDeskSession>['stream']): string 
   if (stream.errorCode) return stream.errorMessage ?? 'error'
   if (stream.events.length > 0) return `${stream.events.length} events`
   return undefined
+}
+
+/**
+ * Replaces the old bare "Use the worked example" link. Collapsed by default so a first-time visitor
+ * sees the textarea first, not a wall of sample copy — CLAUDE.md's "no landing page" applies here in
+ * spirit even though this is the Desk, not a separate screen.
+ */
+function SampleEnquiryPicker({ onPick }: { onPick: (sample: SampleEnquiry) => void }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <Card className="overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-3.5 py-2.5 text-left hover:bg-slate-50"
+      >
+        <Eyebrow>Try a sample enquiry</Eyebrow>
+        <span className="text-[11px] font-medium text-amber-700">{open ? 'Hide' : 'Show'}</span>
+      </button>
+
+      {open && (
+        <div className="divide-y divide-slate-100 border-t border-slate-100">
+          {SAMPLE_ENQUIRIES.map((sample) => (
+            <button
+              key={sample.id}
+              type="button"
+              onClick={() => onPick(sample)}
+              className="flex w-full flex-col gap-0.5 px-3.5 py-2.5 text-left hover:bg-slate-50"
+            >
+              <span className="flex items-center gap-2">
+                <span className="text-[12.5px] font-medium text-slate-900">{sample.label}</span>
+                <Mono className="text-[10.5px] text-slate-400">{sample.sender}</Mono>
+              </span>
+              <span className="text-[11px] leading-relaxed text-slate-500">{sample.why}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </Card>
+  )
 }
 
 function EnquiryPane({

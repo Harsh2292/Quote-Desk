@@ -230,10 +230,13 @@ computed in code, never from the customer's stated date).
 offers to replay one of three recorded runs stored as JSON. A recruiter clicking the live demo must
 never see a blank error.
 
-**Config, resolved in task 06** (`appsettings.json`'s `Llm` section — key names and non-secret
-defaults only, per CLAUDE.md's Security rules): `Endpoint` (defaults to the Gemini endpoint above),
-`ApiKey` (empty; set locally via `dotnet user-secrets set "Llm:ApiKey" "<key>" --project src/QuoteDesk.Api`),
-`Model` (defaults to `gemini-3.6-flash`), `MaxToolCalls` (8), `TokenBudget` (20000, generous rather than
+**Config, resolved in task 06, extended in task 09a** (`appsettings.json`'s `Llm` section — key names
+and non-secret defaults only, per CLAUDE.md's Security rules): `Endpoint` (defaults to the Gemini
+endpoint above), `ApiKey` (empty; set locally via
+`dotnet user-secrets set "Llm:ApiKey" "<key>" --project src/QuoteDesk.Api`), `Model` (defaults to
+`gemini-3.6-flash` — the fallback every per-stage key below uses when unset),
+`ExtractModel`/`NarrateModel` (default `gemini-3.5-flash-lite`), `ResolveModel` (default
+`gemini-3.6-flash`), `MaxToolCalls` (8), `TokenBudget` (20000, generous rather than
 tuned against a live model — revisit once real runs give real numbers), `UseStructuredOutput` (default
 `true` — see below). Bound into
 `QuoteDesk.Agents.Llm.LlmOptions` and passed to `AddQuoteDeskAgentPipeline`, the same pattern
@@ -243,10 +246,35 @@ empty `Llm:ApiKey` fails fast the same way `Auth:Google:ClientId` already did. *
 to `"gemini"`) added alongside the `thought_signature` fix above — see `LlmOptions.cs`'s remarks for
 why the two profiles could no longer share one client differing only by `Endpoint`.
 
-**Per-stage model selection and provider fallback are task 09's**, not built. Today one `Model` is
-used for all three model call types (Extract, Resolve, Narrate) and a provider 429 ends the run.
-Task 09 splits the two easy stages onto a cheap high-quota model and adds a per-run fallback — see
-`tasks/task-09-deploy.md`.
+**Resolved in task 09a — per-stage model routing.** The pipeline's three model calls are genuinely
+different jobs: Extract turns messy text into JSON with no tools and no judgement calls; Resolve is
+the one autonomous node — a tool-calling loop that has to weigh candidates and know when it genuinely
+cannot tell; Narrate writes one sentence from numbers `QuoteDesk.Domain` already computed. Routing
+all three onto one model wasted the scarce, capable model's quota on the two calls that never needed
+it, and — more importantly — bunched every call into one requests-per-minute bucket, which is what
+actually ended the first live run of the reworked pipeline (docs/SESSION-LOG.md, 2026-08-31):
+`gemini-3.6-flash`'s free tier allows only 5 requests/minute, and one run makes ~6 sequential calls in
+well under a minute. `LlmOptions` gained `ExtractModel`/`ResolveModel`/
+`NarrateModel`, each falling back to `Model` when unset:
+
+| Stage | Model | Why |
+|---|---|---|
+| Extract | `gemini-3.5-flash-lite` | No tools, no judgement — the cheap high-quota model. |
+| Resolve | `gemini-3.6-flash` | The one call worth paying for the capable model. |
+| Narrate | `gemini-3.5-flash-lite` | Same reasoning as Extract. |
+
+`QuoteDesk.Agents.Llm.ChatClientRegistry` builds and caches one logging-wrapped `IChatClient` per
+distinct model name — two stages configured onto the same model share one client (and one quota
+bucket); two stages on different models get independent buckets. `EnquiryPipeline` takes this
+registry instead of a single `IChatClient`, and wraps each stage's client in its own
+`BudgetedChatClient` sharing the run's one `TokenUsageTracker`, so the token budget still governs
+across every model in play. The trace records which model answered each stage
+(`StageEvent.Model`, optional, mirrored in `agentEvents.ts`).
+
+No user-facing model selector — CLAUDE.md forbids settings controls; the routing is deterministic
+config. A per-run provider fallback (retry the whole run on a different provider after a first-call
+429) was considered and deliberately not built: it would slow the demo down, and `provider_rate_limited`
+→ the replay picker is already a graceful path that works.
 
 **Structured output — now used, corrected in the 2026-08-31 agent-layer rework.** This section
 originally said schema-enforced output was deliberately avoided because Gemini's support for it was
@@ -305,7 +333,8 @@ Quotes        (Id, EnquiryId, Number, Status, Subtotal, Freight, Tax, Total, Cre
 QuoteLines    (Id, QuoteId, Sku, Qty, UnitPrice, DiscountPct, LineTotal,
                RequiresOverride, DispatchDate, DeliveryDate, Note)                              -- empty
 Users         (Id, GoogleSubject, Email, Name, PictureUrl, Role, CreatedAt, LastLoginAt)       -- empty
-AgentRuns     (Id, EnquiryId, SessionId, Status, ApprovalRequestJson, CreatedAt, UpdatedAt)     -- empty
+AgentRuns     (Id, EnquiryId, SessionId, Status, ApprovalRequestJson, CreatedAt, UpdatedAt,
+               PromptTokens, CompletionTokens)                                                 -- empty
 WorkflowCheckpoints (Id, SessionId, CheckpointId, ParentCheckpointId, Payload, CreatedAt)       -- empty
 ```
 
@@ -348,6 +377,14 @@ integration tests.
 `AgentRuns.TraceJson` was added in task 07's `AddAgentRunTrace` migration — the table already existed
 and had no callers writing this column before task 07, so the change was free. See §8's "Resolved in
 task 07" for what it stores and why.
+
+`AgentRuns.PromptTokens`/`CompletionTokens` were added in the `AddAgentRunTokenUsage` migration
+(2026-09-01, nullable `bigint`) — the run's cumulative token usage as of its last status update,
+carried across the suspend/resume boundary. Without this, `DoneEvent.Usage` always reported `{0, 0}`:
+the tracker that saw Extract/Resolve/Price's real spend belongs to the `/process` request, which ends
+when the run suspends for approval, and `/approvals/{id}`'s own tracker — the one still alive when
+`DoneEvent` is actually built, since `Approve` makes no model calls — started from zero with no way to
+know what came before. See §8's "Resolved 2026-09-01" for the full mechanism.
 
 ## 7. Tools
 
@@ -452,14 +489,20 @@ GET  /health/live  /health/ready
 
 ```ts
 type AgentEvent =
-  | { type: 'stage';      stage: 'extract'|'resolve'|'price'; at: string }
+  | { type: 'stage';      stage: 'extract'|'resolve'|'price'; at: string; model?: string | null }
   | { type: 'tool_start'; name: string; args: unknown; at: string }
   | { type: 'tool_end';   name: string; ms: number; ok: boolean; result: unknown }
   | { type: 'token';      text: string }
   | { type: 'approval_required'; approvalId: string; action: string; payload: unknown }
-  | { type: 'done';       usage: { promptTokens: number; completionTokens: number } }
+  | { type: 'done';       usage: { promptTokens: number; completionTokens: number }; at?: string }
   | { type: 'error';      code: 'provider_rate_limited'|'budget_exceeded'|'internal'; message: string }
 ```
+
+`model` (task 09a) names which model answered that stage's call — optional, since Price's own pricing
+work has no model in the loop at all and the field simply names Narrate's model there instead. Note
+this is a stream-transport code, not a client-side one: `demo_rate_limited` (task 09a, below) is a
+`useAgentStream`-only code for the app's own rate limiter, never a value `ErrorEvent.code` carries —
+the server never emits it.
 
 **Resolved in task 07:**
 
@@ -482,11 +525,31 @@ type AgentEvent =
   what `GET /api/enquiries/{id}` and `GET /api/quotes/{id}` replay once the live SSE stream that
   produced it has closed — CLAUDE.md calls the Agent Trace panel "the product", so it must survive a
   page refresh, not only exist while a browser tab is watching.
-- **Rate limiting is deferred to task 09.** The acceptance criterion task 07's own file originally
-  carried (per-IP, per-token, a daily cap) was struck: it defends a public URL that does not exist
-  until task 09, and Harsh's standing instruction after task 05's review is to build the MVP and defer
-  hardening until the product works end to end. Task 09 owns the public demo, so the rate limiter lands
-  there, where the daily cap has a real number to be sized against.
+- **Resolved in task 09a — rate limiting.** The built-in `Microsoft.AspNetCore.RateLimiting`
+  (`AddRateLimiter`/`UseRateLimiter`), no new package. Three layers:
+  - A `GlobalLimiter` applies to **every** request automatically — the same "protected by default"
+    shape the fallback authorization policy already gives every route, partitioned by the
+    authenticated `sub` claim when present, else client IP (CLAUDE.md's "per IP and per token"). Health
+    checks are exempt (`RateLimitPartition.GetNoLimiter`) — Container Apps (task 09b) polls
+    `/health/live` continuously.
+  - `auth`, stacked on top of the global limiter, applies only to `POST /api/auth/google` — the one
+    anonymous route, and the one that costs a real Google token verification per call.
+  - `pipeline`, also stacked on top, applies only to `POST /api/enquiries/{id}/process` — the one
+    route that spends the shared Gemini key. It is a single shared bucket (`AddFixedWindowLimiter`
+    always partitions on a constant key), not per-user: the key's own daily quota is shared by every
+    visitor, so the cap protecting it has to be too. This is the "hard daily cap on the public demo"
+    CLAUDE.md's Security section calls for. `POST /api/approvals/{id}` deliberately does **not**
+    carry this policy — `ApproveExecutor` makes no model call at all (the Approve stage only writes),
+    so the global baseline is all it needs.
+
+  A rejection writes RFC 9457 ProblemDetails (429) with a `Retry-After` header, via
+  `QuoteDesk.Api.RateLimiting.RateLimitRejectionMessages` — pulled into its own pure function so the
+  "which route, which message" mapping is unit-testable without a host. **This required one frontend
+  fix**: `useAgentStream` used to map *any* transport-level 429 on a stream endpoint to
+  `provider_rate_limited` (the replay-picker path), written before this project had its own limiter —
+  since a model-provider rate limit always arrives as an SSE `error` event instead (the pipeline
+  already started), a transport 429 now only ever means this limiter fired, so it maps to a new,
+  distinct `demo_rate_limited` code and renders as a plain error instead.
 - **`token` is declared in the union above but no pipeline stage emits one yet.** §4 describes
   streaming Price's narration for real; task 06 built `PriceExecutor.NarrateAsync` as one plain,
   non-streaming `narrateAgent.RunAsync` call instead, and `StubChatClient.GetStreamingResponseAsync`
@@ -544,6 +607,98 @@ type AgentEvent =
   as a plain trace-panel error; the recorded-run replay picker — which exists for exactly this — is
   not offered for them yet. Tracked in `tasks/task-08-web.md`'s notes and picked up in the post-09
   review pass.
+
+**Resolved in task 09a — deployment seams and a real build-time gap found along the way:**
+
+- **The sign-in screen was rebuilt.** The task 04a original swallowed Google's own `onError`
+  (`onError={() => undefined}`), had no in-flight state between the credential arriving and
+  `/api/auth/google` answering, dropped an empty `response.credential` silently, and predated the
+  shared design primitives. Now on `Card`/`Button`/`Spinner`, with a real error message for both
+  failure paths and a local `signingIn` state, plus one line on what the demo is and a cold-start
+  note — one card, not a landing page (CLAUDE.md's "no landing page" non-goal). `AuthContext.signIn`'s
+  `catch` also stopped discarding the server's real ProblemDetails `detail` in favour of one hardcoded
+  string.
+- **A "try a sample enquiry" picker replaced the bare "Use the worked example" link** on the Desk —
+  Harsh's own addition to the task file, since a blank textarea is not how a recruiter tries the demo
+  cold. Five samples (`src/QuoteDesk.Web/src/desk/sampleEnquiries.ts`), each shipping a **body and a
+  sender together** — the old link set only the body, and `POST /api/enquiries` falls back to the
+  signed-in Google user's own email when the sender box is blank, which never matches a seeded
+  customer. Each sample's claimed outcome was verified by querying the running seeded database, not
+  derived from the seeder's source by hand — its tier/domain assignment has a real off-by-one between
+  the index used for tier and the index used for everything else.
+- **CORS was already built, in task 07** — `Auth:AllowedOrigins` drives a default CORS policy,
+  inert in dev because the Vite proxy makes the Api same-origin. Task 09b's only job here is setting
+  `Auth__AllowedOrigins__0` to the deployed Static Web Apps URL.
+- **`VITE_API_BASE_URL`** (optional, empty in dev) added for the two-host split Static Web Apps and
+  Container Apps create — every `fetch` call in `src/QuoteDesk.Web` (three call sites: `client.ts`,
+  `stream.ts`, and `AuthContext.tsx`'s own direct sign-in call, which had bypassed `apiFetch`) now
+  goes through one `apiUrl()` helper.
+- **`EnableRetryOnFailure()`** on the EF Core SQL Server provider — Azure SQL's free-tier auto-pause
+  means the first connection after an idle period routinely throws a transient error; safe here
+  because nothing in this project opens an explicit transaction.
+- **`Database:MigrateOnStartup`/`SeedOnStartup`** (both default `false`) — nothing had ever applied
+  migrations or seeded outside a test. The textbook answer is a separate migration job; this project's
+  single-replica demo and an already-idempotent `DeterministicSeeder` make migrate-and-seed-on-boot
+  the smallest thing that ships, with the production-grade version left as documented future work.
+- **`global.json`** pins the SDK feature band (`10.0.400`, `rollForward: latestFeature`) — added
+  because `-warnaserror` plus `EnforceCodeStyleInBuild` means an SDK patch bump can turn a new
+  analyzer diagnostic into a build failure on a CI runner that resolves a different patch than the
+  local machine.
+- **A real, previously-invisible build gap: `dotnet build` (Debug) and `dotnet publish -c Release`
+  disagree.** The Dockerfile's first `docker build` failed on three `CA1848` diagnostics
+  ("use `LoggerMessage` delegates") in `StructuredModelCall.cs` and `EnquiryPipeline.cs` that had been
+  present since those files were written — `dotnet build QuoteDesk.sln -warnaserror`, the command
+  CLAUDE.md's Commands section and every session before this one actually ran, never triggers that
+  analyzer rule; only a Release publish does, and nothing in this project had ever published Release
+  before task 09's Dockerfile. Fixed properly (source-generated `[LoggerMessage]` partial methods, not
+  suppressed), and CLAUDE.md's Commands section now lists the Release build alongside Debug so this
+  class of gap cannot silently recur.
+- **Dockerfile + `.dockerignore`** — multi-stage (`sdk:10.0` builds, `aspnet:10.0` runs), non-root via
+  the base image's already-shipped `app` user (`USER app`), only `QuoteDesk.Api`'s own dependency
+  graph copied into the build context. Verified live: `docker build` succeeds, the container runs as
+  uid 1654, and — pointed at the compose `sql` service with `Database:MigrateOnStartup`/`SeedOnStartup`
+  both `true` — migrates, seeds, and answers `/health/live`/`/health/ready` with 200.
+- **`docker-compose.yml` gained an `api` service** on host port **5080**, not 8080 — 8080 is reserved
+  for the Vite dev server (pinned there to match the registered Google OAuth origin), so this keeps
+  the Vite proxy working unchanged regardless of whether the Api is running via `dotnet run` on the
+  host or via this container.
+- **`.github/workflows/ci.yml`** — `build-test` (both Debug and Release, then the non-Evals test
+  suite, against a SQL Server service container — no API key, no network, matching what
+  `QuoteDeskApiFactory` already guaranteed), `web` (`npm ci && npm run build && npm run lint`, with
+  `VITE_GOOGLE_CLIENT_ID` from a repo Variable, not a Secret), `image` (`docker build`, no push —
+  that is task 09b's).
+
+**Resolved 2026-09-01 — four fixes from the first genuinely live runs through the container:**
+
+- **Token usage across a suspend/resume boundary.** `DoneEvent.Usage` always reported `{0, 0}` —
+  `WorkflowOutputEvent` (the only place `DoneEvent` is built) can only fire after `Approve` runs, a
+  separate HTTP request from the one that ran Extract/Resolve/Price, and each of `StartAsync`/
+  `ResumeAsync` builds its own independent `TokenUsageTracker`. Fixed by persisting the running total
+  onto `AgentRuns.PromptTokens`/`CompletionTokens` at every status update, and seeding `ResumeAsync`'s
+  tracker from it instead of zero.
+- **A failed run can resume past Resolve.** Confirmed against the installed framework docs and live
+  checkpoint data that `Microsoft.Agents.AI.Workflows` checkpoints after *every* SuperStep, not only
+  at the approval `RequestPort` — a failed run's checkpoint right after Resolve was simply never read
+  by anything. `EnquiryPipeline.ProcessAsync` (what `POST /.../process` now calls, replacing a direct
+  `StartAsync` call) transparently resumes from that checkpoint when eligible — the last persisted
+  `StageEvent` is `"price"`, meaning Resolve genuinely finished before the failure — reusing the same
+  `AgentRun` row (resuming a checkpoint keeps its original `SessionId`, which has a unique index, so a
+  new row is impossible). Ineligible failures (Resolve itself failed) fall through to a normal fresh
+  restart, unchanged. No new UI affordance: the trace panel already shows this honestly by which
+  stages do or don't reappear.
+- **Quotes list shows item names**, not just customer/total — `QuoteRepository.ListAsync` now
+  includes `Quotes.Lines` and batch-resolves every distinct SKU on the page to its catalogue name in
+  one query.
+- **Trace panel shows total run duration**, not just per-stage — `DoneEvent` gained an optional `At`
+  timestamp (mirroring how `StageEvent.Model` was added earlier), and the trace panel sums the first
+  stage's start to it.
+
+All four came from one real live run (enquiry #3003, 2026-09-01): 52.68s total server-measured
+(Extract 1.69s, Resolve 49.59s, Narrate ~1.4s), no rate limit — proof the per-stage model routing fix
+holds under real Gemini calls. A real bug was caught fixing #2: the first version of the eligibility
+check tested for last-stage `"resolve"`, but `ResolveExecutor` announces its own stage the moment
+Resolve *starts*, not once it completes — indistinguishable from "Resolve itself failed" without the
+correction to check for `"price"` instead, which can only exist once Resolve has genuinely finished.
 
 ## 9. Non-goals — refuse these
 

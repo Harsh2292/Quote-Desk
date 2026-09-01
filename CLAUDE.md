@@ -52,11 +52,14 @@ arrow has to point the other way, or task 04 cannot compile.)
 
 ```bash
 dotnet build QuoteDesk.sln -warnaserror
+dotnet build QuoteDesk.sln -c Release -warnaserror
 dotnet test --filter "FullyQualifiedName!~Evals"
 dotnet ef migrations add <Name> --project src/QuoteDesk.Data --startup-project src/QuoteDesk.Api
 docker compose up -d
 cd src/QuoteDesk.Web && npm run build
 ```
+
+Run **both** build configurations, not just Debug — task 09 found that `-c Release` triggers analyzer rules Debug does not (CA1848's `LoggerMessage` requirement, discovered when the Dockerfile's `dotnet publish -c Release` failed on three call sites `dotnet build` had passed for the whole project's history). Docker publishes Release; a green Debug build is not proof the image builds.
 
 ## C#
 
@@ -132,6 +135,14 @@ parsing including malformed and empty payloads. Everything else is covered at in
 
 - **Start a session by reading the last entry in `docs/SESSION-LOG.md`.** Nothing else carries
   context across `/clear` — there is no startup hook doing this for you any more.
+- **Use the `codebase-memory` MCP server to orient in the code, not a full read-through.** It serves
+  a pre-built graph of this repo (`search_graph`, `search_code`, `trace_path`, `get_architecture`,
+  `get_code_snippet`, `query_graph`). Query it first when you need to find where something lives,
+  what calls what, or how a stage is wired. Fall back to `Read`/`Grep`/`Glob` only when the graph
+  does not answer — a specific file you already know you need, a fresh edit the index has not seen,
+  or an exact-text search. Re-index after substantial changes: `codebase-memory-mcp cli
+  index_repository --repo-path .` (or `detect_changes` to check staleness). The index is local and
+  not committed; a fresh clone has no graph until it is rebuilt.
 - **One task at a time**, from `tasks/`. Finish it end to end, then stop.
 - **You do the building.** Harsh is learning this stack by reading what you produce, so implement it
   rather than handing back instructions. Ask him to run something only when it genuinely requires

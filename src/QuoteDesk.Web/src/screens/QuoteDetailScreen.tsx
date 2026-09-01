@@ -2,7 +2,7 @@ import { getQuote } from '../api/endpoints'
 import type { QuoteStatus } from '../api/types'
 import { useAsync } from '../hooks/useAsync'
 import { navigate } from '../routing/useHashRoute'
-import { money, shortDate, shortDateTime } from '../lib/format'
+import { money, percent, shortDate, shortDateTime } from '../lib/format'
 import { TracePanel } from '../components/TracePanel'
 import { AsyncBoundary, Badge, Card, Eyebrow, Mono } from '../components/ui'
 
@@ -89,7 +89,8 @@ export function QuoteDetailScreen({ quoteId }: { quoteId: number }) {
                     {state.data.lines.map((line) => (
                       <tr key={line.id} className={line.requiresOverride ? 'bg-red-50' : undefined}>
                         <td className="border-b border-slate-100 px-3.5 py-2.5">
-                          <Mono>{line.sku}</Mono>
+                          <div className="text-slate-900">{line.itemName}</div>
+                          <Mono className="text-[10.5px] text-slate-400">{line.sku}</Mono>
                         </td>
                         <td className="border-b border-slate-100 px-3.5 py-2.5 text-right">
                           <Mono>{line.qty}</Mono>
@@ -98,7 +99,7 @@ export function QuoteDetailScreen({ quoteId }: { quoteId: number }) {
                           <Mono>{money(line.unitPrice)}</Mono>
                         </td>
                         <td className="border-b border-slate-100 px-3.5 py-2.5 text-right">
-                          <Mono>{line.discountPct}%</Mono>
+                          <Mono>{percent(line.discountPct)}</Mono>
                         </td>
                         <td className="border-b border-slate-100 px-3.5 py-2.5 text-right">
                           <Mono>{money(line.lineTotal)}</Mono>

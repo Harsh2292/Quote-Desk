@@ -1,9 +1,9 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using QuoteDesk.Agents.Llm;
 using QuoteDesk.Api.Auth;
 using QuoteDesk.Data;
 using QuoteDesk.Data.Seed;
@@ -48,6 +48,19 @@ public sealed class QuoteDeskApiFactory : WebApplicationFactory<Program>, IAsync
         // Program.cs now fails fast on an empty Llm:ApiKey (task 07) — a placeholder is enough since
         // IChatClient itself is swapped for ScriptableChatClient below and never reaches a real provider.
         Environment.SetEnvironmentVariable("Llm__ApiKey", "test-key");
+
+        // Every test in this collection shares one host, and therefore one process-lifetime rate
+        // limiter (task 09) — a real production limit (10 sign-ins/minute, for instance) is far
+        // tighter than "every test authenticates once, and the whole suite runs in a few seconds"
+        // needs, so tests that happen to run after the quota is already spent would fail on a 429
+        // that has nothing to do with what they're testing. CLAUDE.md's determinism rule ("no ordering
+        // dependence") applies here the same as it would to a shared clock or unseeded random — these
+        // limits are pushed high enough to never bind in a test run; the limiter's actual behaviour
+        // (a 429 with ProblemDetails, health checks exempt) is covered by its own isolated host in
+        // RateLimitingTests, not by this shared fixture.
+        Environment.SetEnvironmentVariable("RateLimiting__GlobalPermitPerMinute", "100000");
+        Environment.SetEnvironmentVariable("RateLimiting__AuthPermitPerMinute", "100000");
+        Environment.SetEnvironmentVariable("RateLimiting__PipelinePermitPerDay", "100000");
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -58,10 +71,18 @@ public sealed class QuoteDeskApiFactory : WebApplicationFactory<Program>, IAsync
             services.AddSingleton<IGoogleIdTokenValidator, StubGoogleIdTokenValidator>();
 
             // CLAUDE.md: "Integration tests use a stubbed IChatClient. CI must pass with no network
-            // and no API key." ScriptableChatClient wraps a per-test-scriptable StubChatClient.
-            services.RemoveAll<IChatClient>();
+            // and no API key." ScriptableChatClient wraps a per-test-scriptable StubChatClient. The
+            // pipeline is built on a ChatClientRegistry (task 09: per-stage model routing), not a bare
+            // IChatClient, so the swap targets the registry and resolves every model name to the same
+            // scriptable instance — Extract/Resolve/Narrate keep sharing one ordered script in tests.
+            services.RemoveAll<ChatClientRegistry>();
             services.AddSingleton<ScriptableChatClient>();
-            services.AddSingleton<IChatClient>(sp => sp.GetRequiredService<ScriptableChatClient>());
+            services.AddSingleton(sp =>
+            {
+                var llmOptions = sp.GetRequiredService<LlmOptions>();
+                var scriptable = sp.GetRequiredService<ScriptableChatClient>();
+                return new ChatClientRegistry(llmOptions, _ => scriptable, loggerFactory: null);
+            });
         });
     }
 

@@ -129,11 +129,13 @@ export interface QuoteSummaryResponse {
   total: number
   createdAt: string
   validUntil: string
+  itemNames: string[]
 }
 
 export interface QuoteLineResponse {
   id: number
   sku: string
+  itemName: string
   qty: number
   unitPrice: number
   discountPct: number

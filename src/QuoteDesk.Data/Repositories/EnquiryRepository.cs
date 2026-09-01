@@ -34,4 +34,11 @@ public sealed class EnquiryRepository(QuoteDeskDbContext db) : IEnquiryRepositor
 
         return entity.Id;
     }
+
+    public async Task UpdateCustomerAsync(int id, int customerId, CancellationToken cancellationToken)
+    {
+        var entity = await db.Enquiries.SingleAsync(e => e.Id == id, cancellationToken);
+        entity.CustomerId = customerId;
+        await db.SaveChangesAsync(cancellationToken);
+    }
 }

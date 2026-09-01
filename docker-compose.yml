@@ -20,5 +20,34 @@ services:
       retries: 10
       start_period: 20s
 
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quotedesk-api
+    depends_on:
+      sql:
+        condition: service_healthy
+    # Host port 5080, not 8080: 8080 is reserved for the Vite dev server (vite.config.ts pins it
+    # there to match the Authorized JavaScript origin registered for the Google OAuth client), and
+    # launchSettings.json's own host-run profile already uses 5080 — so the Vite proxy
+    # ('/api' -> http://localhost:5080) works unchanged whether the Api is running via `dotnet run`
+    # on the host or via this container.
+    ports:
+      - "5080:8080"
+    environment:
+      # sql, not localhost: containers on this compose network resolve each other by service name.
+      # Reuses the same MSSQL_SA_PASSWORD the sql service above is configured with, so the two never
+      # drift out of sync.
+      ConnectionStrings__QuoteDesk: "Server=sql,1433;Database=QuoteDesk;User Id=sa;Password=${MSSQL_SA_PASSWORD:-QuoteDesk!Local1};TrustServerCertificate=True"
+      # Turnkey for this fully-containerized path specifically — nothing else creates the schema.
+      # appsettings.json's own default stays false; production (09b) sets these the same way.
+      Database__MigrateOnStartup: "true"
+      Database__SeedOnStartup: "true"
+    env_file:
+      # Secrets with no sensible default — Google client id, JWT signing key, admin email, Gemini
+      # key. Copy .env.example to .env and fill in real values; never commit .env (see .gitignore).
+      - .env
+
 volumes:
   quotedesk-mssql-data:

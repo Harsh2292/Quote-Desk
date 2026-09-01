@@ -18,15 +18,17 @@ public sealed record QuoteSummaryResponse(
     string? CustomerName,
     decimal Total,
     DateTimeOffset CreatedAt,
-    DateTimeOffset ValidUntil)
+    DateTimeOffset ValidUntil,
+    IReadOnlyList<string> ItemNames)
 {
     public static QuoteSummaryResponse From(QuoteSummaryRecord r) =>
-        new(r.Id, r.EnquiryId, r.Number, r.Status, r.CustomerId, r.CustomerName, r.Total, r.CreatedAt, r.ValidUntil);
+        new(r.Id, r.EnquiryId, r.Number, r.Status, r.CustomerId, r.CustomerName, r.Total, r.CreatedAt, r.ValidUntil, r.ItemNames);
 }
 
 public sealed record QuoteLineResponse(
     int Id,
     string Sku,
+    string ItemName,
     int Qty,
     decimal UnitPrice,
     decimal DiscountPct,
@@ -113,7 +115,7 @@ public static class QuoteEndpoints
             quote.ApprovedAt,
             quote.SentAt,
             [.. quote.Lines.Select(l => new QuoteLineResponse(
-                l.Id, l.Sku, l.Qty, l.UnitPrice, l.DiscountPct, l.LineTotal, l.RequiresOverride, l.DispatchDate, l.DeliveryDate, l.Note))],
+                l.Id, l.Sku, l.ItemName, l.Qty, l.UnitPrice, l.DiscountPct, l.LineTotal, l.RequiresOverride, l.DispatchDate, l.DeliveryDate, l.Note))],
             trace));
     }
 }

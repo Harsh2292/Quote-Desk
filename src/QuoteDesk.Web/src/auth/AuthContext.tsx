@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { apiFetch, setToken, setUnauthorizedHandler } from '../api/client'
+import { apiFetch, apiUrl, setToken, setUnauthorizedHandler } from '../api/client'
 
 export type UserRole = 'admin' | 'sales'
 
@@ -28,6 +28,18 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
+
+/** Reads the RFC 9457 ProblemDetails body a failed `/api/auth/google` call returns (CLAUDE.md's
+ * Security section) so the sign-in screen can show the real reason — an expired Google session, a
+ * client id mismatch — instead of one hardcoded string for every failure. */
+async function problemDetailMessage(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { detail?: string; title?: string }
+    return body.detail ?? body.title ?? 'Google sign-in was rejected by the server.'
+  } catch {
+    return 'Google sign-in was rejected by the server.'
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
@@ -72,25 +84,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(async (googleCredential: string) => {
     setError(null)
     try {
-      const response = await fetch('/api/auth/google', {
+      const response = await fetch(apiUrl('/api/auth/google'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ idToken: googleCredential }),
       })
 
       if (!response.ok) {
-        throw new Error('Google sign-in was rejected by the server.')
+        throw new Error(await problemDetailMessage(response))
       }
 
       const body = (await response.json()) as AuthResponse
       setToken(body.token)
       setUser(body.user)
       setStatus('signedIn')
-    } catch {
+    } catch (err) {
       setToken(null)
       setUser(null)
       setStatus('signedOut')
-      setError('Sign-in failed. Please try again.')
+      setError(err instanceof Error ? err.message : 'Sign-in failed. Please try again.')
     }
   }, [])
 

@@ -1,4 +1,3 @@
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using QuoteDesk.Agents.Checkpointing;
@@ -34,16 +33,15 @@ public static class ServiceCollectionExtensions
         services.AddQuoteDeskAgents();
         services.AddSingleton(llmOptions);
 
-        // One place, one pipeline: every model call in the app — Extract, Resolve's tool loop,
-        // Narrate — goes through this client, so the logging middleware wraps all of them. When a run
-        // fails, the request and response are in the log, not just a database row to reverse-engineer.
+        // One registry, one pipeline: every model call in the app — Extract, Resolve's tool loop,
+        // Narrate — goes through a client this registry built, so the logging middleware wraps all of
+        // them regardless of which model answered. When a run fails, the request and response are in
+        // the log, not just a database row to reverse-engineer. See ChatClientRegistry's remarks for
+        // why the pipeline is no longer built on a single shared IChatClient.
         services.AddSingleton(sp =>
         {
             var loggerFactory = sp.GetService<ILoggerFactory>();
-            var chatClient = ChatClientFactory.Create(llmOptions);
-            return loggerFactory is null
-                ? chatClient
-                : new ChatClientBuilder(chatClient).UseLogging(loggerFactory).Build();
+            return new ChatClientRegistry(llmOptions, model => ChatClientFactory.Create(llmOptions, model), loggerFactory);
         });
 
         services.AddSingleton<PromptLibrary>();

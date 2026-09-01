@@ -5,8 +5,12 @@ namespace QuoteDesk.Agents.Llm;
 /// <c>AddQuoteDeskAgents</c> — the same pattern QuoteDesk.Data's connection string uses, rather than
 /// this project taking a dependency on <c>Microsoft.Extensions.Configuration</c> itself.
 /// <see cref="Endpoint"/>/<see cref="ApiKey"/>/<see cref="Model"/> are empty-string defaults in
-/// appsettings.json, filled locally via <c>dotnet user-secrets</c> (docs/SPEC.md §4: pinned model
-/// <c>gemini-3.6-flash</c> against the Gemini OpenAI-compatibility endpoint).
+/// appsettings.json, filled locally via <c>dotnet user-secrets</c>. Task 09 added per-stage routing
+/// (<see cref="ExtractModel"/>, <see cref="ResolveModel"/>, <see cref="NarrateModel"/>) once the
+/// live pipeline proved that one model for every call bunches ~6 sequential requests against a
+/// single free-tier requests-per-minute ceiling; routing stages onto different models also spreads
+/// them across different quota buckets. <see cref="QuoteDesk.Agents.Llm.ChatClientRegistry"/> is
+/// what turns these into actual <c>IChatClient</c>s, one per distinct model name.
 /// </summary>
 public sealed class LlmOptions
 {
@@ -25,7 +29,26 @@ public sealed class LlmOptions
     /// universally any more, just for that one fallback profile.</summary>
     public required string Endpoint { get; init; }
     public required string ApiKey { get; init; }
+
+    /// <summary>The default model, and the one every stage falls back to when its own
+    /// <see cref="ExtractModel"/>/<see cref="ResolveModel"/>/<see cref="NarrateModel"/> is unset —
+    /// what keeps the evals and any single-model config binding unchanged.</summary>
     public required string Model { get; init; }
+
+    /// <summary>Model for the Extract stage — messy text into JSON, no tools, no judgement calls.
+    /// Falls back to <see cref="Model"/>. docs/SPEC.md §4: routed to a cheap, high-quota model
+    /// (<c>gemini-3.5-flash-lite</c>) since nothing here is worth the capable model's scarce quota.</summary>
+    public string? ExtractModel { get; init; }
+
+    /// <summary>Model for the Resolve stage — the one autonomous node: a tool-calling loop that has
+    /// to weigh candidates and know when it genuinely cannot tell. Falls back to <see cref="Model"/>.
+    /// docs/SPEC.md §4: the one call worth paying for the capable model (<c>gemini-3.6-flash</c>).</summary>
+    public string? ResolveModel { get; init; }
+
+    /// <summary>Model for the Narrate stage — one sentence built from numbers
+    /// <c>QuoteDesk.Domain</c> already computed. Falls back to <see cref="Model"/>. docs/SPEC.md §4:
+    /// routed to the cheap model, same reasoning as <see cref="ExtractModel"/>.</summary>
+    public string? NarrateModel { get; init; }
 
     /// <summary>tasks/task-06: "Max 8 tool calls per run, then a forced summary".</summary>
     public int MaxToolCalls { get; init; } = 8;

@@ -17,6 +17,7 @@ namespace QuoteDesk.Agents.Pipeline;
 public sealed class ResolveExecutor(
     string id,
     IChatClient baseChatClient,
+    string model,
     IReadOnlyList<AIFunction> lookupTools,
     string instructions,
     int maxToolCalls,
@@ -31,7 +32,7 @@ public sealed class ResolveExecutor(
         var (enquiry, extracted) = (message.Enquiry, message.Extracted);
 
         await context.AddEventAsync(
-            new AgentTraceEvent(new StageEvent { Stage = "resolve", At = DateTimeOffset.UtcNow }), cancellationToken);
+            new AgentTraceEvent(new StageEvent { Stage = "resolve", At = DateTimeOffset.UtcNow, Model = model }), cancellationToken);
 
         var budget = new ToolCallBudget(maxToolCalls);
         ValueTask Emit(AgentEvent evt, CancellationToken ct) => context.AddEventAsync(new AgentTraceEvent(evt), ct);

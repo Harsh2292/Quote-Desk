@@ -15,6 +15,7 @@ namespace QuoteDesk.Agents.Pipeline;
 public sealed class ExtractExecutor(
     string id,
     AIAgent agent,
+    string model,
     bool useStructuredOutput,
     ILogger logger)
     : Executor<EnquiryInput, ExtractionResult>(id, options: null, declareCrossRunShareable: false)
@@ -23,7 +24,7 @@ public sealed class ExtractExecutor(
         EnquiryInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {
         await context.AddEventAsync(
-            new AgentTraceEvent(new StageEvent { Stage = "extract", At = DateTimeOffset.UtcNow }), cancellationToken);
+            new AgentTraceEvent(new StageEvent { Stage = "extract", At = DateTimeOffset.UtcNow, Model = model }), cancellationToken);
 
         var prompt = UntrustedContent.Wrap(message.RawBody);
         var extracted = await StructuredModelCall.RunAsync<ExtractedEnquiry>(

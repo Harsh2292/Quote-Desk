@@ -22,6 +22,11 @@ public sealed record StageEvent : AgentEvent
     /// <summary>"extract" | "resolve" | "price".</summary>
     public required string Stage { get; init; }
     public required DateTimeOffset At { get; init; }
+
+    /// <summary>The model answering this stage's call (docs/SPEC.md §4: Extract/Narrate/Resolve are
+    /// routed to different models by difficulty). Optional — null for a stage with no model call of
+    /// its own, and left off by any recorded fixture written before this field existed.</summary>
+    public string? Model { get; init; }
 }
 
 public sealed record ToolStartEvent : AgentEvent
@@ -60,6 +65,13 @@ public sealed record UsageInfo
 public sealed record DoneEvent : AgentEvent
 {
     public required UsageInfo Usage { get; init; }
+
+    /// <summary>When the run actually finished — optional (like <see cref="StageEvent.Model"/>) so
+    /// the hand-written replay fixtures keep compiling unchanged. Paired with the first
+    /// <see cref="StageEvent.At"/> in the same trace, this is what the trace panel sums into a total
+    /// run duration; there was previously no way to compute one for a trace replayed from storage,
+    /// since only a live run could fake it from the browser's own clock.</summary>
+    public DateTimeOffset? At { get; init; }
 }
 
 public sealed record ErrorEvent : AgentEvent

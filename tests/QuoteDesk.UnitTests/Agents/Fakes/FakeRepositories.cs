@@ -89,7 +89,8 @@ internal sealed class FakeQuoteRepository : IQuoteRepository
     public Task<IReadOnlyList<QuoteSummaryRecord>> ListAsync(CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<QuoteSummaryRecord>>(
             [.. _quotes.OrderByDescending(q => q.CreatedAt)
-                .Select(q => new QuoteSummaryRecord(q.Id, q.EnquiryId, q.Number, q.Status, null, null, q.Total, q.CreatedAt, q.ValidUntil))]);
+                .Select(q => new QuoteSummaryRecord(q.Id, q.EnquiryId, q.Number, q.Status, null, null, q.Total, q.CreatedAt, q.ValidUntil,
+                    [.. q.Lines.Select(l => l.Sku)]))]);
 
     public Task<QuoteRecord> CreateDraftAsync(NewQuote quote, CancellationToken cancellationToken)
     {
@@ -97,7 +98,7 @@ internal sealed class FakeQuoteRepository : IQuoteRepository
 
         var id = _quotes.Count + 1;
         var lines = quote.Lines
-            .Select((l, i) => new QuoteLineRecord(i + 1, l.Sku, l.Qty, l.UnitPrice, l.DiscountPct, l.LineTotal, l.RequiresOverride, l.DispatchDate, l.DeliveryDate, l.Note))
+            .Select((l, i) => new QuoteLineRecord(i + 1, l.Sku, l.Sku, l.Qty, l.UnitPrice, l.DiscountPct, l.LineTotal, l.RequiresOverride, l.DispatchDate, l.DeliveryDate, l.Note))
             .ToList();
 
         var record = new QuoteRecord(

@@ -36,7 +36,9 @@ public static class EnquiryEndpoints
         var group = app.MapGroup("/api/enquiries");
 
         group.MapPost("/", CreateFromPasteAsync);
-        group.MapPost("/{id:int}/process", ProcessAsync);
+        // "pipeline" is a hard, demo-wide daily cap stacked on top of the app-wide GlobalLimiter
+        // (Program.cs) — this is the one route that spends the shared Gemini key.
+        group.MapPost("/{id:int}/process", ProcessAsync).RequireRateLimiting("pipeline");
         group.MapGet("/{id:int}", GetByIdAsync);
 
         return app;
@@ -75,9 +77,12 @@ public static class EnquiryEndpoints
 
     /// <summary>Streams the pipeline over SSE. Returns <c>Task</c>, not an <c>IResult</c> — see
     /// <c>ApprovalEndpoints.DecideAsync</c>'s remarks for why a streaming endpoint takes this shape.
-    /// A missing enquiry is not checked here: <see cref="EnquiryPipeline.StartAsync"/> already reports
-    /// it as an <c>ErrorEvent</c> on the stream itself, which is the one error channel a client
-    /// reading SSE is already watching.</summary>
+    /// A missing enquiry is not checked here: <see cref="EnquiryPipeline.ProcessAsync"/> already
+    /// reports it as an <c>ErrorEvent</c> on the stream itself, which is the one error channel a
+    /// client reading SSE is already watching. Calls <c>ProcessAsync</c>, not <c>StartAsync</c>
+    /// directly — <c>ProcessAsync</c> transparently resumes a failed run past Resolve when Resolve
+    /// already succeeded, rather than always restarting from Extract; the existing "Retry" button on
+    /// the Desk needed no change to gain this.</summary>
     private static async Task ProcessAsync(
         int id,
         HttpContext context,
@@ -88,12 +93,12 @@ public static class EnquiryEndpoints
     {
         await AgentEventStreamWriter.WriteAsync(
             context,
-            pipeline.StartAsync(id, cancellationToken),
+            pipeline.ProcessAsync(id, cancellationToken),
             async ct =>
             {
-                // StartAsync creates its AgentRun row before anything else happens, so by the time
-                // the stream has ended, the run this call created — if any — is the latest for this
-                // enquiry. Null when the enquiry did not exist and no run was ever created.
+                // Whether this call started fresh or resumed in place, the run it acted on — if any —
+                // is the latest for this enquiry by the time the stream has ended. Null when the
+                // enquiry did not exist and no run was ever created.
                 var run = await agentRuns.GetLatestByEnquiryIdAsync(id, ct);
                 return run?.Id;
             },

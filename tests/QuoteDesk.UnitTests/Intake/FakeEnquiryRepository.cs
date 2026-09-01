@@ -20,4 +20,15 @@ internal sealed class FakeEnquiryRepository : IEnquiryRepository
         _stored.Add(new EnquiryRecord(id, enquiry.Channel, enquiry.SenderId, enquiry.RawBody, enquiry.ReceivedAt, enquiry.CustomerId, enquiry.Status));
         return Task.FromResult(id);
     }
+
+    public Task UpdateCustomerAsync(int id, int customerId, CancellationToken cancellationToken)
+    {
+        var index = _stored.FindIndex(e => e.Id == id);
+        if (index >= 0)
+        {
+            _stored[index] = _stored[index] with { CustomerId = customerId };
+        }
+
+        return Task.CompletedTask;
+    }
 }

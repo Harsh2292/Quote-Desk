@@ -21,12 +21,20 @@ and the status update happen automatically as part of finishing a task.
 | 07 | [API, streaming, auth, logging](task-07-api.md) | 2 | done |
 | 08 | [React screens](task-08-web.md) | 2 | done |
 | — | Agent-layer rework (retrieval, structured output, ceilings) — see docs/SESSION-LOG.md 2026-08-31 | 2 | done |
-| 09 | [**Deploy — Docker, CI, live URL**](task-09-deploy.md) | 2 | todo |
+| 09a | [Deployable — model routing, rate limiting, container, CI](task-09a-deployable.md) | 2 | in progress |
+| 09b | [**Deploy to Azure — live URL**](task-09b-azure.md) | 2 | todo |
 | — | Code review + security review + codebase walkthrough (Harsh reads the whole deployed system) | 2 | todo |
-| 10 | [Email and WhatsApp channels](task-10-channels.md) | 3 | todo |
 | 11 | [Observability, evals, README, demo](task-11-observability-docs.md) | 3 | todo |
+| 10 | [Email and WhatsApp channels](task-10-channels.md) | 3 | todo |
 
 Status values: `todo` · `in progress` · `done` · `blocked`
+
+**Execution order is 11 before 10, reversing the numbering** (Harsh's call, 2026-09-01): the eval
+suite, telemetry and README are the actual differentiators for a portfolio repo and don't depend on
+extra channels existing; email/WhatsApp are being deliberately saved for last. Task numbers/file
+names are unchanged (10 still means channels, 11 still means observability/evals/README) — only the
+row order above, reflecting when each is actually done, changed. Neither task depends on the other
+(10 depends on 04, 11 depends on 09), so nothing about swapping them is unsafe.
 
 **Tasks 09–11 were re-scoped on 2026-08-31** to absorb the agent-layer rework and the gaps a full
 audit turned up — model routing and the sign-in-screen polish moved into task 09; the eval golden
@@ -34,6 +42,11 @@ set, prompt-injection test, per-stage token counts and OpenTelemetry are spelled
 "Expanded" section. The small correctness bugs the audit found (a streaming-`401` hole, a
 deep-link-`404` infinite load, a swallowed Google `onError`) are recorded in task 08's notes and
 belong to the review pass between 09 and 10, not to a numbered task.
+
+**Task 09 was split into 09a/09b on 2026-09-01** — ten distinct pieces of work is not one sitting.
+09a is everything verifiable on this machine (the model-routing fix that was the actual blocker, rate
+limiting, the container, CI); 09b is Azure and the live URL, needing an account and credentials only
+Harsh has.
 
 ## Why deploy is task 09 and not last
 
@@ -51,9 +64,9 @@ is still a working demo.
 the Gemini key, then schema and the entire pricing engine under test. Apart from the spike, **no LLM
 is called at all.** By the end, every rupee QuoteDesk will ever quote is already provably correct.
 
-**Session 2 (tasks 04–09)** — the agent layer, the product, and the deploy. The big one.
+**Session 2 (tasks 04–09b)** — the agent layer, the product, and the deploy. The big one.
 
-**Session 3 (tasks 10–11)** — extra channels, telemetry, evals, and the README.
+**Session 3 (tasks 11 then 10)** — telemetry, evals, and the README first; extra channels last.
 
 ## Only after task 11
 

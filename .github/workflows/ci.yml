@@ -1,0 +1,86 @@
+name: CI
+
+# Build -> test -> container image, per tasks/task-09a-deployable.md. build-test needs no API key and
+# no network to any model provider (CLAUDE.md, Tests section) — QuoteDeskApiFactory swaps in a
+# stubbed IChatClient/IGoogleIdTokenValidator and sets its own env vars in-process; the only external
+# dependency is the SQL Server service container below, matching what docker-compose.yml runs
+# locally.
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+    branches: [main, development]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    services:
+      sql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          # Matches TestConnection.cs's own fallback default — not a real secret, so no repo secret
+          # is needed for CI to pass. Never used against a real database.
+          MSSQL_SA_PASSWORD: "QuoteDesk!Local1"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'QuoteDesk!Local1' -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 20s
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore QuoteDesk.sln
+
+      # Both configurations, not just Debug — see CLAUDE.md's Commands section: Release triggers
+      # analyzer rules (CA1848) Debug does not, and Release is what the image job below actually ships.
+      - name: Build (Debug)
+        run: dotnet build QuoteDesk.sln -warnaserror --no-restore
+
+      - name: Build (Release)
+        run: dotnet build QuoteDesk.sln -c Release -warnaserror --no-restore
+
+      - name: Test
+        run: dotnet test --filter "FullyQualifiedName!~Evals" --no-build
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/QuoteDesk.Web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: src/QuoteDesk.Web/package-lock.json
+
+      - run: npm ci
+
+      # tsc -b runs as part of `build` (package.json), so a type error fails this step, not a
+      # separate lint job. VITE_GOOGLE_CLIENT_ID is a repo Variable, not a Secret — it is sent to the
+      # browser by design (docs/SPEC.md §3) — set under Settings -> Actions -> Variables.
+      - run: npm run build
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
+
+      - run: npm run lint
+
+  image:
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t quotedesk-api:ci .

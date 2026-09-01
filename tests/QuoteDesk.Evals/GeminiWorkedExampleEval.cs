@@ -90,7 +90,10 @@ public class GeminiWorkedExampleEval
             MaxToolCalls = 8,
             TokenBudget = 20_000,
         };
-        var chatClient = ChatClientFactory.Create(llmOptions);
+        // No ExtractModel/ResolveModel/NarrateModel set above, so every stage falls back to Model —
+        // this eval deliberately puts gemini-3.6-flash on all three, unlike production's per-stage
+        // routing, since the point of this eval is the capable model end to end.
+        var chatClients = new ChatClientRegistry(llmOptions, model => ChatClientFactory.Create(llmOptions, model), loggerFactory: null);
         // A dedicated factory, not the scoped `db` above: the workflow engine writes checkpoints from
         // its own background execution task, concurrently with this method's own use of `db` — the
         // same reason WorkflowCheckpointRepository uses IDbContextFactory in production (docs/SPEC.md
@@ -99,7 +102,7 @@ public class GeminiWorkedExampleEval
 
         var pipeline = new EnquiryPipeline(
             enquiries, agentRuns, readTools, pricingTools, writeTools, quotes, catalog, customers,
-            chatClient, new PromptLibrary(), llmOptions, checkpointStore, timeProvider,
+            chatClients, new PromptLibrary(), llmOptions, checkpointStore, timeProvider,
             NullLogger<EnquiryPipeline>.Instance);
 
         var events = new List<AgentEvent>();

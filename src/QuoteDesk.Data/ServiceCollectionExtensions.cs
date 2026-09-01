@@ -14,7 +14,16 @@ public static class ServiceCollectionExtensions
         // same TContext — registering both throws at startup. AddScoped<QuoteDeskDbContext> below
         // recreates the "one context per request" behaviour everything else in this project expects,
         // just sourced from the same factory instead of a second, conflicting registration.
-        services.AddDbContextFactory<QuoteDeskDbContext>(options => options.UseSqlServer(connectionString));
+        //
+        // EnableRetryOnFailure (task 09): Azure SQL's free-tier auto-pause (docs/SPEC.md §3) means the
+        // first connection after an idle period routinely hits a transient "database is
+        // resuming/unavailable" error — without this, that error surfaces to the caller as a bare 500
+        // instead of EF Core quietly retrying until the database wakes up. Safe here specifically
+        // because nothing in this project opens an explicit transaction (grepped — none do); EF Core's
+        // retrying execution strategy refuses to coexist with a user-managed transaction, so this
+        // would need re-checking if one is ever added.
+        services.AddDbContextFactory<QuoteDeskDbContext>(options => options
+            .UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure()));
         services.AddScoped(sp => sp.GetRequiredService<IDbContextFactory<QuoteDeskDbContext>>().CreateDbContext());
 
         services.AddScoped<ICatalogRepository, CatalogRepository>();

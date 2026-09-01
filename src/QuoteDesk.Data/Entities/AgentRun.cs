@@ -34,5 +34,15 @@ public class AgentRun
     public required DateTimeOffset CreatedAt { get; set; }
     public required DateTimeOffset UpdatedAt { get; set; }
 
+    /// <summary>Cumulative usage from every model call this run has made so far (Extract, Resolve,
+    /// Price's narration). Null until the first status update. Exists because the run suspends and
+    /// resumes across two separate HTTP requests (<c>/process</c>, then <c>/approvals/{id}</c>), each
+    /// building its own in-memory token tracker — without persisting the running total here, the
+    /// second request's tracker starts at zero and the real spend from the first is lost the moment
+    /// its request ends.</summary>
+    public long? PromptTokens { get; set; }
+
+    public long? CompletionTokens { get; set; }
+
     public Enquiry? Enquiry { get; set; }
 }

@@ -18,10 +18,13 @@ namespace QuoteDesk.Agents.Pipeline;
 /// <summary>
 /// The façade task 07 calls — everything above the HTTP layer. A fresh <see cref="Workflow"/> (fresh
 /// executor instances, fresh <see cref="TokenUsageTracker"/>) is built for every call to
-/// <see cref="StartAsync"/> or <see cref="ResumeAsync"/>, including a resume after a real restart —
-/// nothing about a suspended run depends on any object still living in this process's memory.
+/// <see cref="StartAsync"/>, <see cref="ResumeAsync"/>, or <see cref="ProcessAsync"/>, including a
+/// resume after a real restart — nothing about a suspended run depends on any object still living in
+/// this process's memory. <see cref="ProcessAsync"/> is what <c>POST /api/enquiries/{id}/process</c>
+/// actually calls — it transparently resumes a failed run past Resolve when possible, rather than
+/// always restarting via <see cref="StartAsync"/> directly.
 /// </summary>
-public sealed class EnquiryPipeline(
+public sealed partial class EnquiryPipeline(
     IEnquiryRepository enquiries,
     IAgentRunRepository agentRuns,
     ReadToolRegistry readTools,
@@ -30,7 +33,7 @@ public sealed class EnquiryPipeline(
     IQuoteRepository quotes,
     ICatalogRepository catalog,
     ICustomerRepository customers,
-    IChatClient chatClient,
+    ChatClientRegistry chatClients,
     PromptLibrary prompts,
     LlmOptions options,
     SqlCheckpointStore checkpointStore,
@@ -70,7 +73,7 @@ public sealed class EnquiryPipeline(
 
         if (startError is not null)
         {
-            await agentRuns.UpdateStatusAsync(run.Id, AgentRunStatuses.Failed, null, timeProvider.GetUtcNow(), cancellationToken);
+            await agentRuns.UpdateStatusAsync(run.Id, AgentRunStatuses.Failed, null, timeProvider.GetUtcNow(), tokens.PromptTokens, tokens.CompletionTokens, cancellationToken);
             yield return startError;
             yield break;
         }
@@ -96,7 +99,11 @@ public sealed class EnquiryPipeline(
             yield break;
         }
 
-        var tokens = new TokenUsageTracker(options.TokenBudget);
+        // Seeded from what StartAsync's own tracker already recorded before this run suspended — its
+        // instance is long gone (a completed HTTP request's local state), so the only way this leg's
+        // DoneEvent can ever report the true cumulative usage is by picking the total back up from
+        // where AgentRuns.UpdateStatusAsync last persisted it.
+        var tokens = new TokenUsageTracker(options.TokenBudget, run.PromptTokens ?? 0, run.CompletionTokens ?? 0);
         var workflow = BuildWorkflow(tokens);
         var checkpointManager = CheckpointManager.CreateJson(checkpointStore, JsonOptions);
 
@@ -133,23 +140,147 @@ public sealed class EnquiryPipeline(
         }
     }
 
+    /// <summary>
+    /// What <c>POST /api/enquiries/{id}/process</c> actually calls. Transparently resumes a failed
+    /// run from its last good checkpoint when Resolve already succeeded — the expensive,
+    /// quota-scarce step — instead of always restarting from Extract the way a bare
+    /// <see cref="StartAsync"/> call does. Falls through to a normal fresh <see cref="StartAsync"/>
+    /// for every other case: no prior run, a prior run that isn't Failed, or one that failed before
+    /// Resolve finished (nothing worth resuming past there — Extract is cheap and Resolve has to run
+    /// either way, so "resuming" would save almost nothing). The trace panel shows this honestly: a
+    /// resumed run's events pick up directly at "price", visibly skipping fresh extract/resolve
+    /// stages — no separate UI affordance exists, or is needed, to say which happened.
+    /// </summary>
+    public async IAsyncEnumerable<AgentEvent> ProcessAsync(int enquiryId, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var resumable = await FindResumableFailedRunAsync(enquiryId, cancellationToken);
+        if (resumable is not null)
+        {
+            await foreach (var evt in ResumeFailedAsync(resumable, cancellationToken))
+            {
+                yield return evt;
+            }
+
+            yield break;
+        }
+
+        await foreach (var evt in StartAsync(enquiryId, cancellationToken))
+        {
+            yield return evt;
+        }
+    }
+
+    /// <summary>Eligible only when the latest run for this enquiry failed <i>after</i> Resolve
+    /// completed — found from the persisted trace's last <see cref="StageEvent"/>, the same
+    /// deserialize-and-inspect pattern <c>EnquiryEndpoints.GetByIdAsync</c> already uses — and a
+    /// checkpoint genuinely exists for it. Returns null (meaning "start fresh") for everything else,
+    /// including a missing or corrupt trace: this is a convenience shortcut, never the only way to
+    /// make progress.
+    ///
+    /// Checks for last stage <c>"price"</c>, not <c>"resolve"</c> — <see cref="ResolveExecutor"/>
+    /// emits its own <see cref="StageEvent"/> the moment Resolve <i>starts</i>, not once it
+    /// completes, so "resolve" is also the last stage seen when Resolve itself is what failed. A
+    /// "price" stage event, by contrast, can only exist if Resolve already finished and control
+    /// passed to Price — which is exactly the case worth resuming past.</summary>
+    private async Task<AgentRunRecord?> FindResumableFailedRunAsync(int enquiryId, CancellationToken cancellationToken)
+    {
+        var run = await agentRuns.GetLatestByEnquiryIdAsync(enquiryId, cancellationToken);
+        if (run is null || run.Status != AgentRunStatuses.Failed || run.TraceJson is null)
+        {
+            return null;
+        }
+
+        var trace = JsonSerializer.Deserialize<List<AgentEvent>>(run.TraceJson, JsonOptions);
+        var lastStage = trace?.OfType<StageEvent>().LastOrDefault();
+        if (lastStage?.Stage != "price")
+        {
+            return null;
+        }
+
+        var checkpointManager = CheckpointManager.CreateJson(checkpointStore, JsonOptions);
+        var checkpoint = await checkpointManager.GetLatestCheckpointAsync(run.SessionId, cancellationToken);
+        return checkpoint is not null ? run : null;
+    }
+
+    /// <summary>Resumes <paramref name="run"/> — already confirmed Failed, past Resolve, with a real
+    /// checkpoint — from that checkpoint. Reuses the same <c>AgentRun</c> row rather than creating a
+    /// new one: resuming a checkpoint necessarily keeps its original SessionId (there is no framework
+    /// parameter to graft it onto a new one), and <c>AgentRuns.SessionId</c> has a unique index, so a
+    /// second row could never carry it anyway. <c>pendingAnswer: null</c> into
+    /// <see cref="RunAndTranslateAsync"/> is correct here the same way it is for a genuine first run:
+    /// Price hasn't reached the approval port yet, so there is no decision to inject — if it reaches
+    /// that port again, it suspends fresh, exactly like a normal run would.</summary>
+    private async IAsyncEnumerable<AgentEvent> ResumeFailedAsync(AgentRunRecord run, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var tokens = new TokenUsageTracker(options.TokenBudget, run.PromptTokens ?? 0, run.CompletionTokens ?? 0);
+        var workflow = BuildWorkflow(tokens);
+        var checkpointManager = CheckpointManager.CreateJson(checkpointStore, JsonOptions);
+        var checkpoint = await checkpointManager.GetLatestCheckpointAsync(run.SessionId, cancellationToken);
+
+        if (checkpoint is null)
+        {
+            // FindResumableFailedRunAsync just confirmed one exists — this would mean it vanished in
+            // the narrow window between that check and this one. Report it plainly rather than
+            // guessing at a recovery; the next "Retry" click re-runs the same eligibility check and
+            // correctly starts fresh once it sees no checkpoint at all.
+            yield return new ErrorEvent { Code = "internal", Message = $"No checkpoint found for session '{run.SessionId}'." };
+            yield break;
+        }
+
+        await agentRuns.UpdateStatusAsync(run.Id, AgentRunStatuses.Running, null, timeProvider.GetUtcNow(), tokens.PromptTokens, tokens.CompletionTokens, cancellationToken);
+
+        StreamingRun? streamingRun = null;
+        ErrorEvent? resumeError = null;
+        try
+        {
+            streamingRun = await InProcessExecution.ResumeStreamingAsync(workflow, checkpoint, checkpointManager, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            resumeError = ToErrorEvent(ex);
+        }
+
+        if (resumeError is not null)
+        {
+            await agentRuns.UpdateStatusAsync(run.Id, AgentRunStatuses.Failed, null, timeProvider.GetUtcNow(), tokens.PromptTokens, tokens.CompletionTokens, cancellationToken);
+            yield return resumeError;
+            yield break;
+        }
+
+        await using (streamingRun)
+        {
+            await foreach (var evt in RunAndTranslateAsync(streamingRun!, run.Id, tokens, pendingAnswer: null, cancellationToken))
+            {
+                yield return evt;
+            }
+        }
+    }
+
     private WorkflowNodes BuildNodes(TokenUsageTracker tokens)
     {
-        // Every stage talks to the model through this wrapper, so the run's token budget is enforced
-        // per round-trip rather than tallied after each stage has already finished spending.
-        var budgeted = new BudgetedChatClient(chatClient, tokens);
+        // Each stage is wrapped in its own BudgetedChatClient over that stage's own model client
+        // (ChatClientRegistry: Extract/Narrate on the cheap high-quota model, Resolve on the capable
+        // one — docs/SPEC.md §4), all three sharing this run's one TokenUsageTracker so the budget is
+        // still enforced per round-trip across every model in play, not per model.
+        var extractModel = options.ExtractModel ?? options.Model;
+        var resolveModel = options.ResolveModel ?? options.Model;
+        var narrateModel = options.NarrateModel ?? options.Model;
 
-        var extractAgent = budgeted.AsAIAgent(instructions: prompts.Extract, name: "Extract", description: null, tools: null);
-        var narrateAgent = budgeted.AsAIAgent(instructions: prompts.Narrate, name: "Narrate", description: null, tools: null);
+        var extractClient = new BudgetedChatClient(chatClients.Extract, tokens);
+        var resolveClient = new BudgetedChatClient(chatClients.Resolve, tokens);
+        var narrateClient = new BudgetedChatClient(chatClients.Narrate, tokens);
+
+        var extractAgent = extractClient.AsAIAgent(instructions: prompts.Extract, name: "Extract", description: null, tools: null);
+        var narrateAgent = narrateClient.AsAIAgent(instructions: prompts.Narrate, name: "Narrate", description: null, tools: null);
 
         // price_quote is deliberately excluded: Resolve gets only the four lookup tools, so pricing
         // is never something the model can call — it is the Price node's job, in plain code.
         var lookupTools = readTools.Tools.Where(t => t.Name != "price_quote").ToList();
 
         return new WorkflowNodes(
-            new ExtractExecutor("Extract", extractAgent, options.UseStructuredOutput, logger),
-            new ResolveExecutor("Resolve", budgeted, lookupTools, prompts.Resolve, options.MaxToolCalls, catalog, customers, logger),
-            new PriceExecutor("Price", pricingTools, narrateAgent),
+            new ExtractExecutor("Extract", extractAgent, extractModel, options.UseStructuredOutput, logger),
+            new ResolveExecutor("Resolve", resolveClient, resolveModel, lookupTools, prompts.Resolve, options.MaxToolCalls, catalog, customers, logger),
+            new PriceExecutor("Price", pricingTools, narrateAgent, narrateModel),
             new ApproveExecutor("Approve", writeTools, quotes, timeProvider));
     }
 
@@ -193,7 +324,7 @@ public sealed class EnquiryPipeline(
 
                 if (loopError is not null)
                 {
-                    await agentRuns.UpdateStatusAsync(agentRunId, AgentRunStatuses.Failed, null, timeProvider.GetUtcNow(), cancellationToken);
+                    await agentRuns.UpdateStatusAsync(agentRunId, AgentRunStatuses.Failed, null, timeProvider.GetUtcNow(), tokens.PromptTokens, tokens.CompletionTokens, cancellationToken);
                     yield return loopError;
                     yield break;
                 }
@@ -218,7 +349,7 @@ public sealed class EnquiryPipeline(
                         if (info.Request.TryGetDataAs<ApprovalRequest>(out var approvalRequest))
                         {
                             var stored = JsonSerializer.Serialize(new StoredApproval(info.Request.RequestId, approvalRequest), JsonOptions);
-                            await agentRuns.UpdateStatusAsync(agentRunId, AgentRunStatuses.PendingApproval, stored, timeProvider.GetUtcNow(), cancellationToken);
+                            await agentRuns.UpdateStatusAsync(agentRunId, AgentRunStatuses.PendingApproval, stored, timeProvider.GetUtcNow(), tokens.PromptTokens, tokens.CompletionTokens, cancellationToken);
                             yield return new ApprovalRequiredEvent
                             {
                                 ApprovalId = agentRunId.ToString(CultureInfo.InvariantCulture),
@@ -230,21 +361,22 @@ public sealed class EnquiryPipeline(
                         yield break;
 
                     case ExecutorFailedEvent { Data: { } executorException }:
-                        await agentRuns.UpdateStatusAsync(agentRunId, AgentRunStatuses.Failed, null, timeProvider.GetUtcNow(), cancellationToken);
+                        await agentRuns.UpdateStatusAsync(agentRunId, AgentRunStatuses.Failed, null, timeProvider.GetUtcNow(), tokens.PromptTokens, tokens.CompletionTokens, cancellationToken);
                         yield return ToErrorEvent(executorException);
                         yield break;
 
                     case WorkflowErrorEvent { Exception: { } workflowException }:
-                        await agentRuns.UpdateStatusAsync(agentRunId, AgentRunStatuses.Failed, null, timeProvider.GetUtcNow(), cancellationToken);
+                        await agentRuns.UpdateStatusAsync(agentRunId, AgentRunStatuses.Failed, null, timeProvider.GetUtcNow(), tokens.PromptTokens, tokens.CompletionTokens, cancellationToken);
                         yield return ToErrorEvent(workflowException);
                         yield break;
 
                     case WorkflowOutputEvent output:
                         var result = output.As<PipelineResult>();
                         var status = result?.Success == true ? AgentRunStatuses.Completed : AgentRunStatuses.Rejected;
-                        await agentRuns.UpdateStatusAsync(agentRunId, status, null, timeProvider.GetUtcNow(), cancellationToken);
+                        await agentRuns.UpdateStatusAsync(agentRunId, status, null, timeProvider.GetUtcNow(), tokens.PromptTokens, tokens.CompletionTokens, cancellationToken);
                         yield return new DoneEvent
                         {
+                            At = timeProvider.GetUtcNow(),
                             Usage = new UsageInfo
                             {
                                 PromptTokens = (int)Math.Min(tokens.PromptTokens, int.MaxValue),
@@ -266,7 +398,7 @@ public sealed class EnquiryPipeline(
         // Log the real exception — type, message, stack — every time, so the next failure is
         // diagnosable from the server log rather than by reading AgentRuns.TraceJson by hand. The
         // client only ever sees the shaped ErrorEvent below, never this.
-        logger.LogError(ex, "Enquiry pipeline run failed ({ExceptionType})", ex.GetType().FullName);
+        LogPipelineRunFailed(logger, ex, ex.GetType().FullName);
 
         return ex switch
         {
@@ -296,6 +428,11 @@ public sealed class EnquiryPipeline(
             _ => new ErrorEvent { Code = "internal", Message = "The run failed unexpectedly." },
         };
     }
+
+    // Source-generated (CA1848: LoggerMessage delegates instead of the LoggerExtensions convenience
+    // methods) — see StructuredModelCall.cs's remark on why dotnet build (Debug) never caught this.
+    [LoggerMessage(Level = LogLevel.Error, Message = "Enquiry pipeline run failed ({ExceptionType})")]
+    private static partial void LogPipelineRunFailed(ILogger logger, Exception exception, string? exceptionType);
 
     private static bool MentionsContextLimit(string? message) =>
         message is not null

@@ -16,11 +16,18 @@ public interface IAgentRunRepository
     /// lists.</summary>
     Task<IReadOnlyList<AgentRunRecord>> GetPendingApprovalsAsync(CancellationToken cancellationToken);
 
+    /// <summary><paramref name="promptTokens"/>/<paramref name="completionTokens"/> are the run's
+    /// cumulative usage as of this call — every call site already holds a live
+    /// <c>TokenUsageTracker</c>, so this is always the running total, not a delta. Persisting it here
+    /// is what lets a resumed run's fresh tracker start from where the suspended one left off, instead
+    /// of losing everything Extract/Resolve/Price already spent.</summary>
     Task<AgentRunRecord> UpdateStatusAsync(
         int id,
         string status,
         string? approvalRequestJson,
         DateTimeOffset updatedAt,
+        long promptTokens,
+        long completionTokens,
         CancellationToken cancellationToken);
 
     /// <summary>Overwrites <c>TraceJson</c> with <paramref name="traceJson"/> — the Api's SSE writer

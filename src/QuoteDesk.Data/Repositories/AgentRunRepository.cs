@@ -68,6 +68,8 @@ public sealed class AgentRunRepository(QuoteDeskDbContext db) : IAgentRunReposit
         string status,
         string? approvalRequestJson,
         DateTimeOffset updatedAt,
+        long promptTokens,
+        long completionTokens,
         CancellationToken cancellationToken)
     {
         var entity = await db.AgentRuns.SingleAsync(r => r.Id == id, cancellationToken);
@@ -75,6 +77,8 @@ public sealed class AgentRunRepository(QuoteDeskDbContext db) : IAgentRunReposit
         entity.Status = status;
         entity.ApprovalRequestJson = approvalRequestJson;
         entity.UpdatedAt = updatedAt;
+        entity.PromptTokens = promptTokens;
+        entity.CompletionTokens = completionTokens;
         await db.SaveChangesAsync(cancellationToken);
 
         return ToRecord(entity);
@@ -92,7 +96,8 @@ public sealed class AgentRunRepository(QuoteDeskDbContext db) : IAgentRunReposit
     }
 
     private static AgentRunRecord ToRecord(AgentRun r) => new(
-        r.Id, r.EnquiryId, r.SessionId, r.Status, r.ApprovalRequestJson, r.TraceJson, r.CreatedAt, r.UpdatedAt);
+        r.Id, r.EnquiryId, r.SessionId, r.Status, r.ApprovalRequestJson, r.TraceJson, r.CreatedAt, r.UpdatedAt,
+        r.PromptTokens, r.CompletionTokens);
 }
 
 /// <summary>The status vocabulary <see cref="AgentRun.Status"/> is written from. Lives here, not in

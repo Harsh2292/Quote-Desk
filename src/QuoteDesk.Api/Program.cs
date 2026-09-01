@@ -1,18 +1,22 @@
 using System.Globalization;
 using System.Text;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using QuoteDesk.Agents;
 using QuoteDesk.Agents.Llm;
+using QuoteDesk.Api;
 using QuoteDesk.Api.Approvals;
 using QuoteDesk.Api.Auth;
 using QuoteDesk.Api.Enquiries;
 using QuoteDesk.Api.Logging;
 using QuoteDesk.Api.Quotes;
+using QuoteDesk.Api.RateLimiting;
 using QuoteDesk.Data;
 using QuoteDesk.Data.Seed;
 using QuoteDesk.Intake;
@@ -110,6 +114,83 @@ if (authOptions.AllowedOrigins.Count > 0)
         .AllowAnyMethod()));
 }
 
+var rateLimiting = builder.Configuration.GetSection(RateLimitingOptions.SectionName).Get<RateLimitingOptions>()
+    ?? new RateLimitingOptions();
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+        {
+            context.HttpContext.Response.Headers.RetryAfter =
+                ((int)retryAfter.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+        }
+
+        // Distinguishes our own limit from a model-provider rate limit, which arrives as an SSE
+        // `error` event with code `provider_rate_limited` instead — never as this transport-level
+        // 429. The frontend's useAgentStream maps a transport 429 to a plain error, not the
+        // provider-rate-limited replay picker, precisely because this is the only source of one.
+        var detail = RateLimitRejectionMessages.For(context.HttpContext.Request.Path);
+
+        await TypedResults
+            .Problem(detail, statusCode: StatusCodes.Status429TooManyRequests, title: "Too many requests.")
+            .ExecuteAsync(context.HttpContext);
+    };
+
+    // Applies to every request automatically — the same "protected by default" shape the fallback
+    // authorization policy above already gives every route, so an endpoint added later needs no
+    // rate-limiting code of its own to get a baseline. Health checks are exempt: Container Apps (09b)
+    // polls /health/live continuously, and throttling a liveness probe would be worse than not having
+    // one. Partitioned by the authenticated `sub` claim when present, else client IP — CLAUDE.md's
+    // "per IP and per token" — which is why UseRateLimiter (below) has to run after UseAuthentication.
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
+    {
+        if (httpContext.Request.Path.StartsWithSegments("/health"))
+        {
+            return RateLimitPartition.GetNoLimiter("health");
+        }
+
+        var key = httpContext.User.FindFirst("sub")?.Value
+            ?? httpContext.Connection.RemoteIpAddress?.ToString()
+            ?? "unknown";
+
+        return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = rateLimiting.GlobalPermitPerMinute,
+            Window = TimeSpan.FromMinutes(1),
+        });
+    });
+
+    // Stacked on top of the global limiter above (a request must pass both), only on the one
+    // anonymous route — POST /api/auth/google — since each call costs a real Google token
+    // verification and it is the entire surface an unauthenticated caller can reach.
+    options.AddPolicy("auth", httpContext => RateLimitPartition.GetFixedWindowLimiter(
+        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = rateLimiting.AuthPermitPerMinute,
+            Window = TimeSpan.FromMinutes(1),
+        }));
+
+    // Stacked on top of the global limiter above, only on POST /api/enquiries/{id}/process — the one
+    // route that spends the shared Gemini key. AddFixedWindowLimiter always partitions on a single
+    // constant key, so this is one shared bucket across every visitor: a hard cap on the whole demo,
+    // not a per-user allowance, because the key's own daily quota is shared the same way.
+    // POST /api/approvals/{id} deliberately does not carry this policy — ApproveExecutor makes no
+    // model call at all, so the global baseline above is all it needs.
+    options.AddFixedWindowLimiter("pipeline", limiterOptions =>
+    {
+        limiterOptions.PermitLimit = rateLimiting.PipelinePermitPerDay;
+        limiterOptions.Window = TimeSpan.FromDays(1);
+    });
+});
+
+var databaseOptions = builder.Configuration.GetSection(DatabaseStartupOptions.SectionName).Get<DatabaseStartupOptions>()
+    ?? new DatabaseStartupOptions();
+
 var app = builder.Build();
 
 // `dotnet run -- --seed` fills an empty database with deterministic demo data, then exits — it
@@ -121,6 +202,22 @@ if (args.Contains("--seed", StringComparer.Ordinal))
     await DeterministicSeeder.SeedAsync(db, CancellationToken.None);
     Log.Information("Seed complete.");
     return;
+}
+
+// Off by default (see DatabaseStartupOptions's remarks) — only 09b's Container Apps environment
+// turns these on, since nothing else creates or seeds the schema in production.
+if (databaseOptions.MigrateOnStartup)
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var db = scope.ServiceProvider.GetRequiredService<QuoteDeskDbContext>();
+    await db.Database.MigrateAsync();
+    Log.Information("Database migrated on startup.");
+
+    if (databaseOptions.SeedOnStartup)
+    {
+        await DeterministicSeeder.SeedAsync(db, CancellationToken.None);
+        Log.Information("Database seeded on startup.");
+    }
 }
 
 // First in the pipeline so it wraps every other middleware, including logging and auth.
@@ -141,6 +238,10 @@ if (authOptions.AllowedOrigins.Count > 0)
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// After authentication/authorization so the GlobalLimiter's partitioner above can read the `sub`
+// claim on an authenticated request, not just fall back to IP.
+app.UseRateLimiter();
 
 // Liveness never depends on anything downstream — it answers even when the database is unreachable.
 // Both health checks stay outside the fallback authorization policy: a probe carries no token.

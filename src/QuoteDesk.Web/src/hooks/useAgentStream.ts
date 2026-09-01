@@ -5,7 +5,7 @@ import { openAgentStream, StreamProblem } from '../api/stream'
 import type { EnquiryDetailResponse } from '../api/types'
 
 export type StreamPhase = 'idle' | 'streaming' | 'done' | 'error'
-export type StreamErrorCode = 'provider_rate_limited' | 'budget_exceeded' | 'internal'
+export type StreamErrorCode = 'provider_rate_limited' | 'demo_rate_limited' | 'budget_exceeded' | 'internal'
 
 interface AgentStreamState {
   phase: StreamPhase
@@ -67,8 +67,13 @@ export function useAgentStream(): UseAgentStream {
         setState((s) => (s.phase === 'error' ? s : { ...s, phase: 'done' }))
       } catch (err) {
         if (ac.signal.aborted) return
+        // A 429 here is transport-level — it arrived as a plain JSON response, not an SSE stream —
+        // which only ever happens now because our own rate limiter (task 09) rejected the request
+        // before the pipeline ran. A model-provider rate limit is a completely different path: the
+        // pipeline already started, the response is a normal event-stream, and the failure arrives as
+        // an `error` event with code `provider_rate_limited` (handled above, in the `for await` loop).
         const code: StreamErrorCode =
-          err instanceof StreamProblem && err.status === 429 ? 'provider_rate_limited' : 'internal'
+          err instanceof StreamProblem && err.status === 429 ? 'demo_rate_limited' : 'internal'
         const message =
           err instanceof StreamProblem ? err.message : 'The connection to the server was lost.'
         setState((s) => ({ ...s, phase: 'error', errorCode: code, errorMessage: message }))
