@@ -916,3 +916,34 @@ CLI still isn't installed on this machine; 4) task 10 (channels) last, as just d
 **Git state:** nothing committed or pushed this session (per standing rule) — everything from today
 (three bug fixes + four fixes + the 09a work before that) is staged on `development`, ready for Harsh
 to review and push himself.
+
+## 2026-09-01 (cont.) — Harsh tested live, found and fixed two more real gaps, then shipped
+
+Harsh tested today's fixes in the browser himself and found two more real things: item names were
+missing from the quote **detail** page (only the list had been fixed — `QuoteRepository.GetByIdAsync`
+now does the same batched `CatalogItems` lookup `ListAsync` does, `QuoteLineRecord`/`QuoteLineResponse`
+gained `ItemName`, shown above the SKU on the detail table); and the approval card's "Approve & send"
+button is never disabled by unresolved lines — confirmed in code, not assumed, and traced to a real
+semantic drift from `docs/DOMAIN.md`'s original worked example (which has the salesperson *resolve*
+the ambiguity before approving) once task 08 deferred the resolve-inline UI. **Deliberately left
+unfixed** — Harsh's call, "forget it for now" — worth revisiting: hard-disable vs. a distinct
+"send partial quote" affordance are the two real options, written up for whenever he wants it.
+
+**Six edge-case enquiries were designed and verified against the live database** for Harsh to try
+(not_found item, real non-Local freight, a false "same as last time" claim with no supporting order
+history, and a prompt-injection test) — none run yet, his to try next.
+
+**Shipped.** All 181 tests green, Debug+Release build clean, `npm run build`/`lint` clean, one
+commit (`10f7d1b`) on `development`, fast-forwarded into `main`, both pushed to `origin`. **CI ran on
+the push and passed** — the first real confirmation `.github/workflows/ci.yml` actually works, not
+just that it's well-formed YAML.
+
+**Task 09a is now fully done** except nothing else — the "CI green on a push" acceptance criterion is
+satisfied. `docs/SPEC.md`, `tasks/README.md` (11 before 10) and `tasks/task-09a-deployable.md` are all
+reconciled with the final state.
+
+**Next session:** a new task, starting fresh. In order per the reordering above: task 11
+(observability, evals, README — green-field), then task 09b (Azure, `az` CLI needs installing first),
+then task 10 (channels) last. The two left-open items (detail-page item names — done — and the
+approve-button/unresolved-lines question — deliberately deferred) are the only loose threads; neither
+blocks anything.
