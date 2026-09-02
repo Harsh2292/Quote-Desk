@@ -947,3 +947,88 @@ reconciled with the final state.
 then task 10 (channels) last. The two left-open items (detail-page item names — done — and the
 approve-button/unresolved-lines question — deliberately deferred) are the only loose threads; neither
 blocks anything.
+
+## 2026-09-02 — Task 09b planning only (session cut short, nothing built)
+
+**Nothing was created, changed or staged this session.** Working tree is clean at `38a4708` on
+`development`. This entry exists so the next session can resume planning without re-deriving anything.
+
+**Where we got to:** task 09b (deploy to Azure) was explored and four decisions were taken with Harsh
+before the session was stopped. No Azure resource exists, no CD workflow was written, no file was
+touched.
+
+**Harsh's four decisions (settled — do not re-ask):**
+
+1. **Azure account:** he already has a subscription; `az login` is available to him.
+2. **Registry: GHCR, public package** (`ghcr.io/harsh2292/quotedesk-api`), pushed from the CD workflow
+   with the built-in `GITHUB_TOKEN`. Chosen over ACR Basic specifically because ACR is the only
+   line item in this whole deploy that isn't free (~$5/month). Container Apps pulls a *public* GHCR
+   image with **no registry credentials at all**, so it also removes a secret.
+3. **Region: Central India** — lowest latency from Surat. To be verified at execution time that the
+   SQL free offer and Container Apps both exist there; Southeast Asia is the agreed fallback.
+4. **Cold start: accept it, be honest, and warm early.** Measure the real number, write it into
+   `SignInScreen.tsx`'s placeholder copy (currently the words "a few seconds", lines 67-70), *and*
+   have the sign-in screen fire a fire-and-forget `/health/ready` on mount so Azure SQL starts
+   resuming while the visitor reads the card and clicks Google. A keep-warm cron ping was considered
+   and **rejected with a reason**: keeping SQL awake burns the 100,000 vCore-second monthly grant in
+   roughly two days, after which the database auto-pauses for the rest of the month and the demo is
+   dead.
+
+**HARD CONSTRAINT, stated by Harsh mid-session and overriding the task file where they conflict:**
+**₹0. He must not be charged, even though a credit card is attached, and his 12-month Azure free-account
+period is already over.** Everything below was verified against Microsoft's own docs against exactly
+that constraint:
+
+| Piece | Free? | The guard that makes it ₹0 |
+|---|---|---|
+| Azure SQL | **Free forever, not a trial perk** — 100,000 vCore-seconds + 32 GB data + 32 GB backup per database per month, reset on the 1st, up to 10 databases per subscription, no time limit | Create with `--use-free-limit --free-limit-exhaustion-behavior AutoPause`. On exhaustion the database simply becomes inaccessible until the next calendar month at **no charge**. The irreversible choice is opting *into* billing ("Continue using database with additional charges"), which we never do — and once taken it cannot be reverted. |
+| Container Apps | 180,000 vCPU-seconds + 360,000 GiB-seconds + 2,000,000 requests per subscription per month, always-free, Consumption plan | Consumption-only environment; `min-replicas 0` so an idle app costs literally nothing; `max-replicas 1` so a traffic spike cannot scale into charges. |
+| Static Web Apps | Free SKU, no expiry | Do not pick Standard. |
+| **Log Analytics** | 5 GB/month ingestion free | **The one real leak.** A Container Apps environment provisions a Log Analytics workspace by default and it bills past 5 GB. Cap it with a daily quota (or `--logs-destination none`, at the cost of losing live logs) so it physically cannot exceed the grant. |
+
+The ended free-trial period does not affect any of the above — these are always-free recurring monthly
+grants, not 12-month new-account offers.
+
+**Also established by exploration (saves re-doing it):**
+
+- **`az` CLI is still not installed.** An attempt to install it via
+  `winget install -e --id Microsoft.AzureCLI` was started and cancelled when the session was stopped.
+  This is the first blocker next session.
+- **No infra assets exist anywhere in the repo** — no `staticwebapp.config.json`, no bicep/ARM, no
+  `infra/`, no CD workflow. `.github/workflows/ci.yml` is the only workflow and its `image` job builds
+  but never pushes.
+- The container listens on **8080** via `ENV ASPNETCORE_HTTP_PORTS=8080`, runs as `USER app`
+  (uid 1654), and never calls `UseHttpsRedirection` — correct for Container Apps ingress terminating
+  TLS.
+- `Program.cs` **fails fast** on an empty `Auth:Google:ClientId`, a `Auth:Jwt:SigningKey` under 32
+  bytes, and an empty `Llm:ApiKey`. Note `GetConnectionString("QuoteDesk")` returns `""` rather than
+  null for the appsettings default, so a missing connection string does **not** trip its throw — it
+  fails later at SQL connect.
+- **`SeedOnStartup` is nested inside `MigrateOnStartup`** in `Program.cs` — setting
+  `Database__SeedOnStartup=true` alone does nothing; both must be true.
+- **`/health/live` runs no checks** (`Predicate = _ => false`) and `/health/ready` runs the SQL check.
+  Both anonymous, both exempt from the rate limiter. The Container App liveness probe must use
+  `/health/live` only, exactly as the task file says.
+- **A real startup risk to design for:** migration runs *before* `app.Run()`, so the container is not
+  listening until `MigrateAsync()` finishes. On a cold start against an auto-paused Azure SQL that
+  wait includes the database resume. The startup probe needs a generous
+  `failureThreshold × periodSeconds` (~300s) or Container Apps will kill the replica while it is
+  legitimately waiting. `EnableRetryOnFailure()` is already on the EF Core provider.
+- **A circular ordering dependency between the two hosts:** `VITE_API_BASE_URL` needs the Container
+  App FQDN, and `Auth__AllowedOrigins__0` needs the Static Web Apps URL. Resolve by creating the
+  Container App first, then the SWA, then updating the Container App's `AllowedOrigins`.
+- SWA needs a `staticwebapp.config.json` with a `navigationFallback` rewrite to `/index.html`, or
+  every deep link (`/approvals`, `/quotes`) 404s.
+- CORS is already built (task 07) and is inert until `Auth:AllowedOrigins` is non-empty.
+  `AgentEventStreamWriter` already sets `X-Accel-Buffering: no`, which is why the task file insists on
+  direct cross-origin calls to the Container App rather than an SWA proxy route.
+
+**Next session, in order:** 1) install `az` and `az login` (Harsh's, or retry the winget install);
+2) verify Central India hosts both the SQL free offer and Container Apps; 3) provision in the order
+Container App → SWA → back-fill `AllowedOrigins`; 4) write `staticwebapp.config.json` and the CD
+workflow; 5) Harsh adds the SWA origin to the Google OAuth client's authorized JavaScript origins
+(portal click, his); 6) budget alert; 7) measure cold start and write the number into both
+`SignInScreen.tsx` and this log.
+
+**Session stopped by Harsh mid-turn (frozen screen, machine restart needed). Nothing left in a
+half-finished state — there was nothing to finish.**
