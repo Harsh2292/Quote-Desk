@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { GoogleLogin, type CredentialResponse } from '@react-oauth/google'
 import { useAuth } from './AuthContext'
+import { apiUrl } from '../api/client'
 import { Card, Spinner } from '../components/ui'
 
 /**
@@ -15,6 +16,16 @@ export function SignInScreen() {
   const { status, error, signIn } = useAuth()
   const [signingIn, setSigningIn] = useState(false)
   const [googleError, setGoogleError] = useState<string | null>(null)
+
+  // Fire-and-forget cold-start warm-up (task 09b). In production the Api is a Container App scaled to
+  // zero and Azure SQL auto-pauses; the first request after idle has to wake both. Kicking that off
+  // here — while the visitor is still reading this card and reaching for the Google button — hides
+  // most of the wait behind the sign-in step rather than the first pipeline run. `/health/ready` runs
+  // the SQL check (so it resumes the database, not just the container) and is exempt from the rate
+  // limiter. The response is irrelevant; only the side effect matters, so failures are swallowed.
+  useEffect(() => {
+    void fetch(apiUrl('/health/ready')).catch(() => {})
+  }, [])
 
   const handleSuccess = (response: CredentialResponse) => {
     if (!response.credential) {
