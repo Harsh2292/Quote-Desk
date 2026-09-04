@@ -1,6 +1,8 @@
+using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.HttpResults;
 using QuoteDesk.Agents.Pipeline;
+using QuoteDesk.Api.Auth;
 using QuoteDesk.Data;
 using QuoteDesk.Data.Repositories;
 
@@ -73,22 +75,36 @@ public static class QuoteEndpoints
         return app;
     }
 
-    private static async Task<Ok<IReadOnlyList<QuoteSummaryResponse>>> ListAsync(
-        IQuoteRepository quotes, CancellationToken cancellationToken)
+    private static async Task<Results<Ok<IReadOnlyList<QuoteSummaryResponse>>, ProblemHttpResult>> ListAsync(
+        ClaimsPrincipal principal, IQuoteRepository quotes, CancellationToken cancellationToken)
     {
-        var records = await quotes.ListAsync(cancellationToken);
+        if (!principal.TryGetUserId(out var callerId))
+        {
+            return TypedResults.Problem("Token does not carry a valid subject.", statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        // Owner-scoped, via the quote's own enquiry — see Entities.Enquiry.OwnerUserId's remarks for
+        // why an unowned (legacy/seeded) quote is invisible to everyone.
+        var records = (await quotes.ListAsync(cancellationToken)).Where(r => r.OwnerUserId == callerId);
 
         return TypedResults.Ok<IReadOnlyList<QuoteSummaryResponse>>([.. records.Select(QuoteSummaryResponse.From)]);
     }
 
     private static async Task<Results<Ok<QuoteDetailResponse>, ProblemHttpResult>> GetByIdAsync(
         int id,
+        ClaimsPrincipal principal,
         IQuoteRepository quotes,
         IAgentRunRepository agentRuns,
         CancellationToken cancellationToken)
     {
+        if (!principal.TryGetUserId(out var callerId))
+        {
+            return TypedResults.Problem("Token does not carry a valid subject.", statusCode: StatusCodes.Status401Unauthorized);
+        }
+
         var quote = await quotes.GetByIdAsync(id, cancellationToken);
-        if (quote is null)
+        // 404, not 403: same reasoning as EnquiryEndpoints.GetByIdAsync.
+        if (quote is null || quote.OwnerUserId != callerId)
         {
             return TypedResults.Problem($"Quote {id} does not exist.", statusCode: StatusCodes.Status404NotFound);
         }

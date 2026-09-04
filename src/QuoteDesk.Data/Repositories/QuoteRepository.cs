@@ -8,8 +8,11 @@ public sealed class QuoteRepository(QuoteDeskDbContext db) : IQuoteRepository
 {
     public async Task<QuoteRecord?> GetByIdAsync(int id, CancellationToken cancellationToken)
     {
+        // Include Enquiry so ToRecord can report the enquiry's owner — QuoteEndpoints uses it to 404
+        // a quote that belongs to a different signed-in user.
         var quote = await db.Quotes.AsNoTracking()
             .Include(q => q.Lines)
+            .Include(q => q.Enquiry)
             .SingleOrDefaultAsync(q => q.Id == id, cancellationToken);
 
         if (quote is null)
@@ -52,7 +55,8 @@ public sealed class QuoteRepository(QuoteDeskDbContext db) : IQuoteRepository
             q.Total,
             q.CreatedAt,
             q.ValidUntil,
-            [.. q.Lines.Select(l => names.GetValueOrDefault(l.Sku, l.Sku))]))];
+            [.. q.Lines.Select(l => names.GetValueOrDefault(l.Sku, l.Sku))],
+            q.Enquiry?.OwnerUserId))];
     }
 
     public async Task<QuoteRecord> CreateDraftAsync(NewQuote quote, CancellationToken cancellationToken)
@@ -141,5 +145,9 @@ public sealed class QuoteRepository(QuoteDeskDbContext db) : IQuoteRepository
         q.ApprovedAt,
         q.SentAt,
         [.. q.Lines.Select(l => new QuoteLineRecord(
-            l.Id, l.Sku, names?.GetValueOrDefault(l.Sku, l.Sku) ?? l.Sku, l.Qty, l.UnitPrice, l.DiscountPct, l.LineTotal, l.RequiresOverride, l.DispatchDate, l.DeliveryDate, l.Note))]);
+            l.Id, l.Sku, names?.GetValueOrDefault(l.Sku, l.Sku) ?? l.Sku, l.Qty, l.UnitPrice, l.DiscountPct, l.LineTotal, l.RequiresOverride, l.DispatchDate, l.DeliveryDate, l.Note))],
+        // Only populated when the caller Included Enquiry (GetByIdAsync) — null everywhere else
+        // (CreateDraftAsync, MarkSentAsync, MarkApprovedAsync), which is fine: none of those callers
+        // read this field, it exists only for QuoteEndpoints' ownership check.
+        q.Enquiry?.OwnerUserId);
 }

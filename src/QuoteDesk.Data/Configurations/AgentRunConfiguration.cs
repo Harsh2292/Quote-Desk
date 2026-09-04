@@ -22,5 +22,11 @@ public class AgentRunConfiguration : IEntityTypeConfiguration<AgentRun>
             .WithMany()
             .HasForeignKey(r => r.EnquiryId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // Restrict, not Cascade: deleting a user must never delete the runs they started.
+        builder.HasOne(r => r.OwnerUser)
+            .WithMany()
+            .HasForeignKey(r => r.OwnerUserId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

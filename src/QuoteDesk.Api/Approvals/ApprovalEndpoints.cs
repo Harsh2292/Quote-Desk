@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.HttpResults;
 using QuoteDesk.Agents.Pipeline;
+using QuoteDesk.Api.Auth;
 using QuoteDesk.Api.Streaming;
 using QuoteDesk.Data.Repositories;
 
@@ -28,10 +29,19 @@ public static class ApprovalEndpoints
         return app;
     }
 
-    private static async Task<Ok<IReadOnlyList<PendingApprovalSummary>>> ListPendingAsync(
-        IAgentRunRepository agentRuns, CancellationToken cancellationToken)
+    private static async Task<Results<Ok<IReadOnlyList<PendingApprovalSummary>>, ProblemHttpResult>> ListPendingAsync(
+        ClaimsPrincipal principal, IAgentRunRepository agentRuns, CancellationToken cancellationToken)
     {
-        var runs = await agentRuns.GetPendingApprovalsAsync(cancellationToken);
+        if (!principal.TryGetUserId(out var callerId))
+        {
+            return TypedResults.Problem("Token does not carry a valid subject.", statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        // Owner-scoped: a run with no owner is legacy/seeded data, invisible to everyone — see
+        // Entities.Enquiry.OwnerUserId's remarks for why that is the deliberate clean slate rather
+        // than a migration hazard.
+        var runs = (await agentRuns.GetPendingApprovalsAsync(cancellationToken))
+            .Where(r => r.OwnerUserId == callerId);
 
         var summaries = new List<PendingApprovalSummary>();
         foreach (var run in runs)
@@ -84,6 +94,14 @@ public static class ApprovalEndpoints
             return;
         }
 
+        if (!principal.TryGetUserId(out var approvedByUserId))
+        {
+            await TypedResults.Problem(
+                "Token does not carry a valid subject.",
+                statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+            return;
+        }
+
         var run = await agentRuns.GetByIdAsync(id, cancellationToken);
         if (run is null || run.Status != AgentRunStatuses.PendingApproval || run.ApprovalRequestJson is not { } approvalJson)
         {
@@ -93,14 +111,15 @@ public static class ApprovalEndpoints
             return;
         }
 
-        // MapInboundClaims is disabled in Program.cs, so "sub" comes through exactly as JwtIssuer
-        // wrote it — our own user id, not Google's subject.
-        var subject = principal.FindFirst("sub")?.Value;
-        if (subject is null || !int.TryParse(subject, out var approvedByUserId))
+        // Ownership check — the single most important gate in this file, because this endpoint is
+        // the only path that reaches the write tools (ApproveExecutor's create_quote_draft/
+        // send_quote). 404, not 403: on a public demo this must not confirm to a stranger that a
+        // given approval id exists and belongs to someone else.
+        if (run.OwnerUserId != approvedByUserId)
         {
             await TypedResults.Problem(
-                "Token does not carry a valid subject.",
-                statusCode: StatusCodes.Status401Unauthorized).ExecuteAsync(context);
+                $"Approval {id} is not awaiting a decision.",
+                statusCode: StatusCodes.Status404NotFound).ExecuteAsync(context);
             return;
         }
 

@@ -4,11 +4,6 @@ node_modules/
 dist/
 .vs/
 .vscode/
-.claude/
-docs/
-tasks/
-.msp.json
-CLAUDE.md
 *.user
 
 # secrets — never commit

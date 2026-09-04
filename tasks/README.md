@@ -21,8 +21,8 @@ and the status update happen automatically as part of finishing a task.
 | 07 | [API, streaming, auth, logging](task-07-api.md) | 2 | done |
 | 08 | [React screens](task-08-web.md) | 2 | done |
 | — | Agent-layer rework (retrieval, structured output, ceilings) — see docs/SESSION-LOG.md 2026-08-31 | 2 | done |
-| 09a | [Deployable — model routing, rate limiting, container, CI](task-09a-deployable.md) | 2 | in progress |
-| 09b | [**Deploy to Azure — live URL**](task-09b-azure.md) | 2 | todo |
+| 09a | [Deployable — model routing, rate limiting, container, CI](task-09a-deployable.md) | 2 | done |
+| 09b | [**Deploy to Azure — live URL**](task-09b-azure.md) | 2 | done |
 | — | Code review + security review + codebase walkthrough (Harsh reads the whole deployed system) | 2 | todo |
 | 11 | [Observability, evals, README, demo](task-11-observability-docs.md) | 3 | todo |
 | 10 | [Email and WhatsApp channels](task-10-channels.md) | 3 | todo |

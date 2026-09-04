@@ -720,3 +720,22 @@ product. **Task 09 deploys it** — from that point a live URL exists and every 
 something already running. Tasks 10–11 add channels, telemetry, evals and the README.
 
 Do not remove the old project from the resume until this one is deployed, green, and documented.
+
+**Deployed 2026-09-02 (task 09b).** Live:
+
+- Frontend — https://nice-stone-04dc8f600.5.azurestaticapps.net (Static Web Apps, Free SKU)
+- API — https://quotedesk-api.icyground-3aeb2921.centralindia.azurecontainerapps.io (Container Apps,
+  Consumption, `min-replicas 0`)
+
+Everything runs on always-free Azure grants with an explicit guard on each (SQL free-limit +
+AutoPause; Container App `0..1` replicas; Log Analytics capped at 0.1 GB/day ingestion; a ₹1 budget
+alert as a backstop) — the deploy is designed to cost ₹0, not merely to be cheap. The image is a
+**public GHCR package** (`ghcr.io/harsh2292/quotedesk-api`), so no Azure Container Registry and no
+registry credentials; CD (`.github/workflows/cd.yml`) authenticates to Azure via **GitHub OIDC**
+(federated credential, Contributor scoped to the one resource group), so nothing long-lived is
+stored in GitHub beyond the Static Web Apps deploy token. The browser calls the API directly
+cross-origin (CORS from task 07, `Auth:AllowedOrigins`) rather than through an SWA proxy route,
+because SWA's proxy buffers responses and would break SSE. Full detail, including three deploy-time
+snags (device-code login, Git Bash path mangling, GitHub's new immutable OIDC subject claim) and one
+pre-existing gap surfaced by the real Google validator (`POST /api/auth/google` returns 500 rather
+than 401 on a malformed token), is in `tasks/task-09b-azure.md` and `docs/SESSION-LOG.md`.

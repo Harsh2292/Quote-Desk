@@ -18,5 +18,13 @@ public class Enquiry
 
     public required string Status { get; set; }
 
+    /// <summary>The signed-in salesperson who created this enquiry — null for the seeded demo data
+    /// and anything created before this column existed. A stranger who signs in to the public demo
+    /// must only ever see and act on their own enquiries; a null-owned row belongs to nobody and is
+    /// invisible everywhere ownership is checked, which is the deliberate clean slate for
+    /// pre-existing rows rather than a migration hazard to work around.</summary>
+    public int? OwnerUserId { get; set; }
+
     public Customer? Customer { get; set; }
+    public AppUser? OwnerUser { get; set; }
 }

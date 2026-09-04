@@ -11,9 +11,40 @@ import { navigate, type Route } from '../routing/useHashRoute'
 import { ApprovalCard } from '../components/ApprovalCard'
 import { RateLimitedPanel } from '../components/RateLimitedPanel'
 import { TracePanel } from '../components/TracePanel'
-import { AsyncBoundary, Button, Card, Eyebrow, Field, Mono } from '../components/ui'
+import { AsyncBoundary, Button, Card, Eyebrow, Field, IconButton, Mono } from '../components/ui'
 
 type DeskRoute = Extract<Route, { name: 'desk' }>
+
+// Icon-only header actions (Retry / Edit & re-run / New enquiry) — three text buttons packed into
+// one header read as a run-on phrase; a symbol + hover tooltip (IconButton, in components/ui) reads
+// as three distinct actions instead. Stroke icons matching the app's existing checkmark logo and
+// spinner (viewBox 0 0 24 24, no fill, currentColor stroke), not a library — nothing else here has
+// an icon dependency either.
+function RetryIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="23 4 23 10 17 10" />
+      <polyline points="1 20 1 14 7 14" />
+      <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" />
+    </svg>
+  )
+}
+
+function EditIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+    </svg>
+  )
+}
+
+function PlusIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  )
+}
 
 function lastApprovalRequest(events: AgentEvent[]): {
   request: ApprovalRequest | null
@@ -108,32 +139,20 @@ export function DeskScreen({ route }: { route: DeskRoute }) {
           <EnquiryPane
             title={`Enquiry #${route.enquiryId}`}
             actions={
-              <div className="flex gap-2">
+              <div className="flex items-center gap-1">
                 {failed && (
                   <>
-                    <button
-                      type="button"
-                      onClick={session.retry}
-                      className="text-[11.5px] font-medium text-slate-600 hover:text-slate-900"
-                    >
-                      Retry
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => session.editForRerun(session.draftBody)}
-                      className="text-[11.5px] font-medium text-slate-600 hover:text-slate-900"
-                    >
-                      Edit &amp; re-run
-                    </button>
+                    <IconButton label="Retry" onClick={session.retry}>
+                      <RetryIcon />
+                    </IconButton>
+                    <IconButton label="Edit & re-run" onClick={() => session.editForRerun(session.draftBody)}>
+                      <EditIcon />
+                    </IconButton>
                   </>
                 )}
-                <button
-                  type="button"
-                  onClick={session.reset}
-                  className="text-[11.5px] font-medium text-amber-700 hover:text-amber-800"
-                >
-                  New enquiry
-                </button>
+                <IconButton label="New enquiry" tone="warn" onClick={session.reset}>
+                  <PlusIcon />
+                </IconButton>
               </div>
             }
           >
@@ -197,23 +216,22 @@ export function DeskScreen({ route }: { route: DeskRoute }) {
         <EnquiryPane
           title={`Enquiry #${route.enquiryId}`}
           actions={
-            <button
-              type="button"
-              onClick={session.reset}
-              className="text-[11.5px] font-medium text-amber-700 hover:text-amber-800"
-            >
-              New enquiry
-            </button>
+            <IconButton label="New enquiry" tone="warn" onClick={session.reset}>
+              <PlusIcon />
+            </IconButton>
           }
         >
           <div className="flex-1 overflow-y-auto p-5">
-            {historical === null ? (
-              <div className="text-[12px] text-slate-400">Loading enquiry…</div>
-            ) : (
+            {/* Was `historical === null ? "Loading enquiry…" : <pre>…` — that conflated the
+                loading and error states, since `historical` is null in both. A deep link to an
+                enquiry that 404s (deleted, or simply a bad URL) showed "Loading enquiry…" forever
+                with no error message; "New enquiry" in the header above stays reachable regardless
+                of status so a user stuck here is never actually trapped. */}
+            <AsyncBoundary status={state.status} error={state.status === 'error' ? state.error : undefined} onRetry={reload}>
               <pre className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-3.5 font-mono text-[12px] leading-relaxed text-slate-700">
-                {historical.detail.rawBody}
+                {historical?.detail.rawBody}
               </pre>
-            )}
+            </AsyncBoundary>
           </div>
         </EnquiryPane>
         <div className="flex min-h-0 flex-1 flex-col">

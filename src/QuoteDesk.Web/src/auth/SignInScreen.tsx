@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { GoogleLogin, type CredentialResponse } from '@react-oauth/google'
 import { useAuth } from './AuthContext'
 import { apiUrl } from '../api/client'
-import { Card, Spinner } from '../components/ui'
+import { Card, Logo, Spinner } from '../components/ui'
 
 /**
  * Shown whenever `status !== 'signedIn'` — the loading and error states CLAUDE.md requires. This is
@@ -49,9 +49,7 @@ export function SignInScreen() {
     <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
       <Card className="flex w-full max-w-sm flex-col items-center gap-5 px-8 py-10">
         <div className="flex flex-col items-center gap-2 text-center">
-          <div className="flex size-9 items-center justify-center rounded-[5px] bg-slate-900 text-[13px] font-semibold text-white">
-            Q
-          </div>
+          <Logo size={36} />
           <h1 className="text-base font-semibold text-slate-900">QuoteDesk</h1>
           <p className="max-w-xs text-[12.5px] leading-relaxed text-slate-500">
             An agentic RFQ-to-quotation demo. Sign in with any Google account to try it — nothing is

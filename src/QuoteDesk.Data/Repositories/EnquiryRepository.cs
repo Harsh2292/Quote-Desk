@@ -12,7 +12,7 @@ public sealed class EnquiryRepository(QuoteDeskDbContext db) : IEnquiryRepositor
 
         return enquiry is null
             ? null
-            : new EnquiryRecord(enquiry.Id, enquiry.Channel, enquiry.SenderId, enquiry.RawBody, enquiry.ReceivedAt, enquiry.CustomerId, enquiry.Status);
+            : new EnquiryRecord(enquiry.Id, enquiry.Channel, enquiry.SenderId, enquiry.RawBody, enquiry.ReceivedAt, enquiry.CustomerId, enquiry.Status, enquiry.OwnerUserId);
     }
 
     public async Task<int> CreateAsync(NewEnquiry enquiry, CancellationToken cancellationToken)
@@ -27,6 +27,7 @@ public sealed class EnquiryRepository(QuoteDeskDbContext db) : IEnquiryRepositor
             ReceivedAt = enquiry.ReceivedAt,
             CustomerId = enquiry.CustomerId,
             Status = enquiry.Status,
+            OwnerUserId = enquiry.OwnerUserId,
         };
 
         db.Enquiries.Add(entity);

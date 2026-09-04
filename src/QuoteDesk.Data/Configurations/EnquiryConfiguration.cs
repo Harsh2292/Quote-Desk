@@ -19,5 +19,11 @@ public class EnquiryConfiguration : IEntityTypeConfiguration<Enquiry>
             .WithMany()
             .HasForeignKey(e => e.CustomerId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // Restrict, not Cascade: deleting a user must never delete the enquiries they created.
+        builder.HasOne(e => e.OwnerUser)
+            .WithMany()
+            .HasForeignKey(e => e.OwnerUserId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

@@ -124,6 +124,77 @@ export function StatusDot({ tone }: { tone: DotTone }) {
   return <span className={cn('inline-block size-[7px] shrink-0 rounded-full', DOT_TONES[tone])} />
 }
 
+// ── Logo ─────────────────────────────────────────────────────────────────────
+
+/** The one QuoteDesk mark, used at two sizes (the header's small badge, the sign-in card's larger
+ * one) — previously the header used a checkmark and the sign-in screen a "Q" glyph, so the two
+ * screens a visitor sees first showed two different brand marks. "Q" is the one both now render, tied
+ * directly to the product name. `size` is the outer square's side in pixels; the letter's font size
+ * scales proportionally so it reads correctly at either size. */
+export function Logo({ size = 20, className }: { size?: number; className?: string }) {
+  return (
+    <span
+      className={cn(
+        'flex shrink-0 items-center justify-center rounded-[5px] bg-slate-900 font-semibold text-white',
+        className,
+      )}
+      style={{ width: size, height: size, fontSize: size * 0.45 }}
+    >
+      Q
+    </span>
+  )
+}
+
+// ── IconButton ───────────────────────────────────────────────────────────────
+
+type IconButtonTone = 'neutral' | 'warn'
+
+const ICON_BUTTON_TONES: Record<IconButtonTone, string> = {
+  neutral: 'text-slate-500 hover:bg-slate-100 hover:text-slate-900',
+  warn: 'text-amber-700 hover:bg-amber-50',
+}
+
+/** A compact icon-only action button with a hover tooltip standing in for its visible label — for a
+ * row of actions (Retry / Edit & re-run / New enquiry) where three text buttons packed together read
+ * as one run-on phrase rather than three distinct actions. `label` is both the tooltip text and the
+ * accessible name (there is no visible text otherwise). CSS-only tooltip, no library: this app has no
+ * component dependency for anything else, so adding one for a single hover bubble would be the odd
+ * one out. */
+export function IconButton({
+  label,
+  tone = 'neutral',
+  className,
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  label: string
+  tone?: IconButtonTone
+  children: ReactNode
+}) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        aria-label={label}
+        className={cn(
+          'flex size-7 items-center justify-center rounded-md transition-colors',
+          ICON_BUTTON_TONES[tone],
+          className,
+        )}
+        {...props}
+      >
+        {children}
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute left-1/2 top-full z-10 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10.5px] font-medium text-white opacity-0 transition-opacity delay-300 group-hover:opacity-100"
+      >
+        {label}
+      </span>
+    </span>
+  )
+}
+
 // ── Spinner ──────────────────────────────────────────────────────────────────
 
 export function Spinner({ className }: { className?: string }) {

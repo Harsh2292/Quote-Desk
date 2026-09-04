@@ -23,14 +23,23 @@ public sealed class PasteAdapter(IEnquiryRepository enquiries) : IEnquiryIntakeA
             ReceivedAt = receivedAt,
         };
 
-    public async Task<EnquiryIntakeResult> IngestAsync(IncomingEnquiry enquiry, CancellationToken cancellationToken)
+    public Task<EnquiryIntakeResult> IngestAsync(IncomingEnquiry enquiry, CancellationToken cancellationToken) =>
+        IngestAsync(enquiry, ownerUserId: null, cancellationToken);
+
+    /// <summary>The overload the interactive paste endpoint calls, stamping which signed-in
+    /// salesperson created this enquiry — <c>Enquiries.OwnerUserId</c> is what every per-user read
+    /// filters on. Deliberately not part of <see cref="IEnquiryIntakeAdapter"/>: a future email or
+    /// WhatsApp adapter has no signed-in caller to attribute an enquiry to, and the interface's own
+    /// doc comment promises "no change required outside QuoteDesk.Intake" — widening it would break
+    /// that for every future adapter over a concept only the paste channel has a use for.</summary>
+    public async Task<EnquiryIntakeResult> IngestAsync(IncomingEnquiry enquiry, int? ownerUserId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(enquiry);
 
         var status = EnquiryStatusRule.Resolve(enquiry);
 
         var id = await enquiries.CreateAsync(
-            new NewEnquiry(Channel.ToString(), enquiry.SenderId, enquiry.Body, enquiry.ReceivedAt, CustomerId: null, status),
+            new NewEnquiry(Channel.ToString(), enquiry.SenderId, enquiry.Body, enquiry.ReceivedAt, CustomerId: null, status, ownerUserId),
             cancellationToken);
 
         return new EnquiryIntakeResult(id, status);

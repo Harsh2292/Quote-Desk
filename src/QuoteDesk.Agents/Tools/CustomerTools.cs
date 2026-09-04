@@ -63,9 +63,14 @@ public sealed class CustomerTools(ICustomerRepository customers, IOrderHistoryRe
     public async Task<IReadOnlyList<PriorPurchase>> GetCustomerHistoryAsync(
         [Description("The customer's Id, from a prior resolve_customer call.")]
         int customerId,
+        // = null, not just `string?`: found live — the description already told the model it may
+        // omit this argument entirely, but with no C# default AIFunction's argument binding has
+        // nothing to fall back to when the model does exactly that, throwing "The arguments
+        // dictionary is missing a value for the required parameter 'sku'." A nullable parameter is
+        // not automatically an optional one at this binding layer.
         [Description("Narrows the history to one SKU. Omit (null) to see every prior purchase.")]
-        string? sku,
-        CancellationToken cancellationToken)
+        string? sku = null,
+        CancellationToken cancellationToken = default)
     {
         var orders = await orderHistory.GetByCustomerAsync(customerId, sku, cancellationToken);
 

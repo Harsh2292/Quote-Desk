@@ -44,5 +44,12 @@ public class AgentRun
 
     public long? CompletionTokens { get; set; }
 
+    /// <summary>Denormalized from the owning <see cref="Enquiry.OwnerUserId"/> at creation time so
+    /// every read that lists or fetches a run — <c>GET /api/approvals</c> chief among them — can
+    /// filter without joining back to Enquiries. Null has the same meaning as on
+    /// <see cref="Entities.Enquiry"/>: owned by nobody, invisible to every signed-in user.</summary>
+    public int? OwnerUserId { get; set; }
+
     public Enquiry? Enquiry { get; set; }
+    public AppUser? OwnerUser { get; set; }
 }

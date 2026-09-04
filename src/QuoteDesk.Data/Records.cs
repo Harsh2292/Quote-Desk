@@ -69,18 +69,23 @@ public sealed record EnquiryRecord(
     string RawBody,
     DateTimeOffset ReceivedAt,
     int? CustomerId,
-    string Status);
+    string Status,
+    int? OwnerUserId = null);
 
 /// <summary>Everything needed to persist one freshly ingested enquiry. <c>Channel</c> and
 /// <c>Status</c> are plain strings here — the enum and status constants they came from belong to
-/// QuoteDesk.Intake, which converts before calling <see cref="Repositories.IEnquiryRepository.CreateAsync"/>.</summary>
+/// QuoteDesk.Intake, which converts before calling <see cref="Repositories.IEnquiryRepository.CreateAsync"/>.
+/// <c>OwnerUserId</c> defaults to null so the channel adapters a future task might add — which never
+/// have a signed-in caller — construct this the same way <see cref="Intake.PasteAdapter"/> always
+/// has; only the interactive paste flow stamps it, via its own overload.</summary>
 public sealed record NewEnquiry(
     string Channel,
     string SenderId,
     string RawBody,
     DateTimeOffset ReceivedAt,
     int? CustomerId,
-    string Status);
+    string Status,
+    int? OwnerUserId = null);
 
 /// <summary>One line of a quote being created. <c>UnitPrice</c> is the already-discounted net price
 /// — the same rounding rule as <see cref="QuoteDesk.Domain.PricedLine.NetUnitPrice"/> — never a list
@@ -142,7 +147,11 @@ public sealed record QuoteRecord(
     int? ApprovedByUserId,
     DateTimeOffset? ApprovedAt,
     DateTimeOffset? SentAt,
-    IReadOnlyList<QuoteLineRecord> Lines);
+    IReadOnlyList<QuoteLineRecord> Lines,
+    // The enquiry's owner, for the ownership check GET /api/quotes/{id} makes — null whenever the
+    // caller didn't Include the Enquiry navigation, which is fine: nothing but that one endpoint
+    // reads this field.
+    int? OwnerUserId = null);
 
 /// <summary>One pipeline run of one enquiry through Extract → Resolve → Price → Approve.
 /// <see cref="PromptTokens"/>/<see cref="CompletionTokens"/> are the cumulative usage this run has
@@ -158,10 +167,14 @@ public sealed record AgentRunRecord(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     long? PromptTokens,
-    long? CompletionTokens);
+    long? CompletionTokens,
+    int? OwnerUserId = null);
 
-/// <summary>Everything needed to start tracking a new pipeline run.</summary>
-public sealed record NewAgentRun(int EnquiryId, string SessionId, string Status, DateTimeOffset CreatedAt);
+/// <summary>Everything needed to start tracking a new pipeline run. <c>OwnerUserId</c> is carried
+/// over from the owning <see cref="EnquiryRecord.OwnerUserId"/> by the one caller,
+/// <c>EnquiryPipeline.StartAsync</c> — denormalized onto the run itself so every list/read of runs
+/// can filter without joining back to Enquiries.</summary>
+public sealed record NewAgentRun(int EnquiryId, string SessionId, string Status, DateTimeOffset CreatedAt, int? OwnerUserId = null);
 
 /// <summary>The row shape <c>GET /api/quotes</c> lists — a summary, not the full line detail
 /// <see cref="QuoteRecord"/> carries. <c>CustomerName</c> is joined in from the quote's enquiry
@@ -177,7 +190,10 @@ public sealed record QuoteSummaryRecord(
     decimal Total,
     DateTimeOffset CreatedAt,
     DateTimeOffset ValidUntil,
-    IReadOnlyList<string> ItemNames);
+    IReadOnlyList<string> ItemNames,
+    // The enquiry's owner — GET /api/quotes filters on this so a signed-in stranger sees only the
+    // quotes their own enquiries produced.
+    int? OwnerUserId = null);
 
 /// <summary>One committed workflow checkpoint's identity, without its payload — enough to let
 /// QuoteDesk.Agents' bridge onto <c>ICheckpointStore&lt;JsonElement&gt;</c> pick the latest checkpoint

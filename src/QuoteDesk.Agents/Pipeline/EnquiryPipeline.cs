@@ -53,7 +53,8 @@ public sealed partial class EnquiryPipeline(
 
         var sessionId = $"enquiry-{enquiryId}-{Guid.NewGuid():N}";
         var run = await agentRuns.CreateAsync(
-            new NewAgentRun(enquiryId, sessionId, AgentRunStatuses.Running, timeProvider.GetUtcNow()), cancellationToken);
+            new NewAgentRun(enquiryId, sessionId, AgentRunStatuses.Running, timeProvider.GetUtcNow(), enquiry.OwnerUserId),
+            cancellationToken);
 
         var tokens = new TokenUsageTracker(options.TokenBudget);
         var workflow = BuildWorkflow(tokens);
@@ -421,6 +422,21 @@ public sealed partial class EnquiryPipeline(
                 new ErrorEvent { Code = "budget_exceeded", Message = "The enquiry produced too much context for the model to process." },
             Google.GenAI.ClientError { StatusCode: 400 } ge when MentionsContextLimit(ge.Message) =>
                 new ErrorEvent { Code = "budget_exceeded", Message = "The enquiry produced too much context for the model to process." },
+
+            // Found live: Google.GenAI.ServerError is a *distinct* type from ClientError — the 5xx
+            // family ("This model is currently experiencing high demand...") rather than the 429
+            // family — and fell through to the generic "internal" bucket before this case existed,
+            // which is actively misleading: it implies a bug in this app rather than the real,
+            // transient, provider-side condition it is. Reported through the same
+            // provider_rate_limited code (and so the same replay-picker UX) as an actual rate limit.
+            //
+            // Deliberately narrowed to StatusCode: 503, not the bare type — ServerError is documented
+            // (Google.GenAI's own XML docs) as a blanket wrapper for the whole 5xx range, and the only
+            // condition actually observed live is 503 "high demand". A genuine 500 could just as
+            // easily mean this app sent a malformed request (a real bug worth surfacing as `internal`,
+            // exception-logged, and investigated) as a transient provider fault.
+            Google.GenAI.ServerError { StatusCode: 503 } =>
+                new ErrorEvent { Code = "provider_rate_limited", Message = "The model provider is temporarily unavailable." },
 
             OperationCanceledException =>
                 new ErrorEvent { Code = "internal", Message = "The run was cancelled or timed out." },

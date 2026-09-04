@@ -1032,3 +1032,41 @@ workflow; 5) Harsh adds the SWA origin to the Google OAuth client's authorized J
 
 **Session stopped by Harsh mid-turn (frozen screen, machine restart needed). Nothing left in a
 half-finished state — there was nothing to finish.**
+
+## 2026-09-02 — Task 09b: deployed to Azure, live URL
+
+**Done:** QuoteDesk is live at https://nice-stone-04dc8f600.5.azurestaticapps.net (React on Static
+Web Apps Free) → https://quotedesk-api.icyground-3aeb2921.centralindia.azurecontainerapps.io
+(Container Apps Consumption, scale-to-zero). Google sign-in works; the docs/DOMAIN.md worked example
+ran end to end on the live site (enquiry #13 → QTN-2026-0001, 32.71s, no rate limit). Azure SQL
+migrated + seeded itself on first boot (25 customers / 262 catalog / 1200 orders / 12 enquiries —
+matches local). CD (`.github/workflows/cd.yml`) deploys on every push to `main` via GitHub OIDC (no
+stored Azure secret) and pulls a public GHCR image (no ACR).
+
+**Files that matter:** `.github/workflows/cd.yml` (build→push→`az containerapp update`→SWA upload);
+`tasks/task-09b-azure.md` Notes on completion (every resource name, guard, and snag);
+`src/QuoteDesk.Web/src/auth/SignInScreen.tsx` (warm-up ping added; cold-start copy still the
+placeholder "a few seconds").
+
+**Decisions made:** No probe YAML on the Container App — ACA defaults already give a ~4-min startup
+grace and a TCP liveness that never wakes a paused DB, which is exactly the task file's intent;
+declaring a partial set would lose the defaults. SWA resource sits in East Asia (no India
+control-plane region) — irrelevant, static bundle is CDN-global. Container App was created with a
+placeholder image, then CD swapped the real one — breaks the "app needs an image / CD needs a target"
+cycle.
+
+**Known gaps:** Cold start measured at **26.4s** (container scale-from-zero + .NET boot + migration
+check, SQL still warm); a genuine all-cold hit where Azure SQL also resumes from its 60-min
+auto-pause adds ~20-30s, so worst case ~50s. `SignInScreen.tsx` copy updated to "30-60 seconds" and
+notes the warm-up ping absorbs most of it. `POST /api/auth/google` returns **500 not
+401** on a malformed/absent `idToken` — pre-existing, `GoogleIdTokenValidator.ValidateAsync` lets
+`FormatException`/`ArgumentException` escape; real Google tokens are always valid so sign-in is fine;
+belongs to the 09→10 review pass. CD web build has no `npm ci` cache. `Database__MigrateOnStartup`/
+`SeedOnStartup` left permanently `true` (idempotent; a migrate job is the textbook fix, noted in 09a).
+
+**Blocked on Harsh:** Nothing. Doc changes this session (`docs/SPEC.md` §10, `tasks/README.md`
+09a+09b → done, `tasks/task-09b-azure.md`) are uncommitted on `main` for him to commit and push,
+plus a one-line cold-start copy edit once the number is measured.
+
+**Next:** Task 11 (observability, evals, README) — the eval golden set is genuinely green-field and
+is the actual portfolio differentiator. Task 10 (channels) is last, per the 2026-09-01 reorder.

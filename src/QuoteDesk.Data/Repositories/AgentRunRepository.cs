@@ -16,6 +16,7 @@ public sealed class AgentRunRepository(QuoteDeskDbContext db) : IAgentRunReposit
             Status = run.Status,
             CreatedAt = run.CreatedAt,
             UpdatedAt = run.CreatedAt,
+            OwnerUserId = run.OwnerUserId,
         };
 
         db.AgentRuns.Add(entity);
@@ -97,7 +98,7 @@ public sealed class AgentRunRepository(QuoteDeskDbContext db) : IAgentRunReposit
 
     private static AgentRunRecord ToRecord(AgentRun r) => new(
         r.Id, r.EnquiryId, r.SessionId, r.Status, r.ApprovalRequestJson, r.TraceJson, r.CreatedAt, r.UpdatedAt,
-        r.PromptTokens, r.CompletionTokens);
+        r.PromptTokens, r.CompletionTokens, r.OwnerUserId);
 }
 
 /// <summary>The status vocabulary <see cref="AgentRun.Status"/> is written from. Lives here, not in

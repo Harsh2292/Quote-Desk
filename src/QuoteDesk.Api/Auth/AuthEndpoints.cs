@@ -72,10 +72,7 @@ public static class AuthEndpoints
         IUserRepository users,
         CancellationToken cancellationToken)
     {
-        // MapInboundClaims is disabled in Program.cs, so the "sub" claim is not remapped to the
-        // legacy XML claim type — it comes through exactly as JwtIssuer wrote it.
-        var subject = principal.FindFirst("sub")?.Value;
-        if (subject is null || !int.TryParse(subject, out var userId))
+        if (!principal.TryGetUserId(out var userId))
         {
             return TypedResults.Problem("Token does not carry a valid subject.", statusCode: StatusCodes.Status401Unauthorized);
         }
